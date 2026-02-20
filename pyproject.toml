@@ -9,6 +9,7 @@ dependencies = [
     "uv",
     "numpy",
     "treys",
+    "gym>=0.26.2",
 ]
 
 
