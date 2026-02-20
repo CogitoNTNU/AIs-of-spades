@@ -8,6 +8,7 @@ license-files = ["LICENSE"]
 dependencies = [
     "uv",
     "numpy",
+    "treys",
 ]
 
 
