@@ -31,4 +31,9 @@ class Action:
         self.bet_amount = bet_amount
 
 
-action_list = [PlayerAction.CHECK, PlayerAction.FOLD, PlayerAction.BET, PlayerAction.CALL]
+action_list = [
+    PlayerAction.CHECK,
+    PlayerAction.FOLD,
+    PlayerAction.BET,
+    PlayerAction.CALL,
+]
