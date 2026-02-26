@@ -13,21 +13,34 @@ BB = 5
 
 
 class Table(gym.Env):
-    def __init__(self, n_players, player_names=None, track_single_player=False, stack_low=50, stack_high=200, hand_history_location='hands/', invalid_action_penalty=0):
-        self.action_space = gym.spaces.Tuple((gym.spaces.Discrete(4), gym.spaces.Box(-math.inf, math.inf, (1, 1))))
+    def __init__(
+        self,
+        n_players,
+        player_names=None,
+        track_single_player=False,
+        stack_low=50,
+        stack_high=200,
+        hand_history_location="hands/",
+        invalid_action_penalty=0,
+    ):
+        self.action_space = gym.spaces.Tuple(
+            (gym.spaces.Discrete(4), gym.spaces.Box(-math.inf, math.inf, (1, 1)))
+        )
         self.observation_space = gym.spaces.Box(-math.inf, math.inf, (58, 1))
         self.n_players = n_players
         if player_names is None:
             player_names = {}
         for player in range(6):
             if player not in player_names.keys():
-                player_names[player] = 'player_%d' % (player+1)
-        self.all_players = [Player(n, player_names[n], invalid_action_penalty) for n in range(6)]
+                player_names[player] = "player_%d" % (player + 1)
+        self.all_players = [
+            Player(n, player_names[n], invalid_action_penalty) for n in range(6)
+        ]
         # If not None, tracked_player_i chooses which players private cards we write to the hand history (for tracking software)
         self.track_single_player = track_single_player
         self.players = self.all_players[:n_players]
         self.active_players = n_players
-        self.next_player_i = min(self.n_players-1, 2)
+        self.next_player_i = min(self.n_players - 1, 2)
         self.current_player_i = self.next_player_i
         self.hand_history_location = hand_history_location
         self.hand_history_enabled = False
@@ -59,7 +72,7 @@ class Table(gym.Env):
         self.rng.shuffle(self.deck.cards)
         self.cards = []
         self.active_players = self.n_players
-        self.players = self.all_players[:self.n_players]
+        self.players = self.all_players[: self.n_players]
         self.rng.shuffle(self.players)
         self.next_player_i = 0 if self.n_players == 2 else 2
         self.current_player_i = self.next_player_i
@@ -70,7 +83,7 @@ class Table(gym.Env):
         for i, player in enumerate(self.players):
             player.reset()
             player.position = i
-            player.cards = [initial_draw[i], initial_draw[i+self.n_players]]
+            player.cards = [initial_draw[i], initial_draw[i + self.n_players]]
             player.stack = self.rng.integers(self.stack_low, self.stack_high, 1)[0]
         self.hand_history = []
         if self.hand_history_enabled:
@@ -94,7 +107,9 @@ class Table(gym.Env):
         player = self.players[self.current_player_i]
         self.current_turn += 1
 
-        if (player.all_in or player.state is not PlayerState.ACTIVE) and not self.hand_is_over:
+        if (
+            player.all_in or player.state is not PlayerState.ACTIVE
+        ) and not self.hand_is_over:
             raise Exception("A player who is inactive or all-in was allowed to act")
         if self.first_to_act is None:
             self.first_to_act = player
@@ -115,7 +130,9 @@ class Table(gym.Env):
                 call_size = player.call(self.bet_to_match)
                 self.pot += call_size
                 if player.all_in:
-                    self._write_event("%s: calls $%.2f and is all-in" % (player.name, call_size * BB))
+                    self._write_event(
+                        "%s: calls $%.2f and is all-in" % (player.name, call_size * BB)
+                    )
                 else:
                     self._write_event("%s: calls $%.2f" % (player.name, call_size * BB))
             elif action.action_type is PlayerAction.BET:
@@ -124,30 +141,57 @@ class Table(gym.Env):
                 self.pot += actual_bet_size
                 if self.bet_to_match == 0:
                     if player.all_in:
-                        self._write_event("%s: bets $%.2f and is all-in" % (player.name, actual_bet_size * BB))
+                        self._write_event(
+                            "%s: bets $%.2f and is all-in"
+                            % (player.name, actual_bet_size * BB)
+                        )
                     else:
-                        self._write_event("%s: bets $%.2f" % (player.name, actual_bet_size * BB))
+                        self._write_event(
+                            "%s: bets $%.2f" % (player.name, actual_bet_size * BB)
+                        )
                 else:
                     if player.all_in:
-                        self._write_event("%s: raises $%.2f to $%.2f and is all-in" %
-                                          (player.name,
-                                           ((actual_bet_size + previous_bet_this_street) - self.bet_to_match) * BB,
-                                           (actual_bet_size + previous_bet_this_street) * BB)
-                                          )
+                        self._write_event(
+                            "%s: raises $%.2f to $%.2f and is all-in"
+                            % (
+                                player.name,
+                                (
+                                    (actual_bet_size + previous_bet_this_street)
+                                    - self.bet_to_match
+                                )
+                                * BB,
+                                (actual_bet_size + previous_bet_this_street) * BB,
+                            )
+                        )
                     else:
-                        self._write_event("%s: raises $%.2f to $%.2f" %
-                                          (player.name,
-                                           ((actual_bet_size + previous_bet_this_street) - self.bet_to_match) * BB,
-                                           (actual_bet_size + previous_bet_this_street) * BB)
-                                          )
+                        self._write_event(
+                            "%s: raises $%.2f to $%.2f"
+                            % (
+                                player.name,
+                                (
+                                    (actual_bet_size + previous_bet_this_street)
+                                    - self.bet_to_match
+                                )
+                                * BB,
+                                (actual_bet_size + previous_bet_this_street) * BB,
+                            )
+                        )
                 self._change_bet_to_match(actual_bet_size + previous_bet_this_street)
                 self.last_bet_placed_by = player
             else:
-                raise Exception("Error when parsing action, make sure player action_type is PlayerAction and not int")
+                raise Exception(
+                    "Error when parsing action, make sure player action_type is PlayerAction and not int"
+                )
 
             should_transition_to_end = False
-            players_with_actions = [p for p in self.players if p.state is PlayerState.ACTIVE if not p.all_in]
-            players_who_should_act = [p for p in players_with_actions if (not p.acted_this_street or p.bet_this_street != self.bet_to_match)]
+            players_with_actions = [
+                p for p in self.players if p.state is PlayerState.ACTIVE if not p.all_in
+            ]
+            players_who_should_act = [
+                p
+                for p in players_with_actions
+                if (not p.acted_this_street or p.bet_this_street != self.bet_to_match)
+            ]
 
             # If the game is over, or the betting street is finished, progress the game state
             if len(players_with_actions) < 2 and len(players_who_should_act) == 0:
@@ -155,8 +199,12 @@ class Table(gym.Env):
                 # If all active players are all-in, transition to the end, allowing no actions in the remaining streets
                 if self.active_players > 1:
                     biggest_bet_call = max(
-                        [p.bet_this_street for p in self.players
-                         if p.state is PlayerState.ACTIVE if p is not self.last_bet_placed_by]
+                        [
+                            p.bet_this_street
+                            for p in self.players
+                            if p.state is PlayerState.ACTIVE
+                            if p is not self.last_bet_placed_by
+                        ]
                     )
                     last_bet_this_street = 0
                     if self.last_bet_placed_by is not None:
@@ -175,22 +223,35 @@ class Table(gym.Env):
                     self.last_bet_placed_by.money_in_pot -= amount
                     self.last_bet_placed_by.bet_this_street -= amount
                     self._write_event(
-                        "Uncalled bet ($%.2f) returned to %s" % (amount * BB, self.last_bet_placed_by.name)
+                        "Uncalled bet ($%.2f) returned to %s"
+                        % (amount * BB, self.last_bet_placed_by.name)
                     )
                 if should_transition_to_end:
                     self._street_transition(transition_to_end=True)
             # If the betting street is still active, choose next player to act
             else:
-                active_players_after = [i for i in range(self.n_players) if i > self.current_player_i if
-                                        self.players[i].state is PlayerState.ACTIVE if not self.players[i].all_in]
-                active_players_before = [i for i in range(self.n_players) if i <= self.current_player_i if
-                                         self.players[i].state is PlayerState.ACTIVE if not self.players[i].all_in]
+                active_players_after = [
+                    i
+                    for i in range(self.n_players)
+                    if i > self.current_player_i
+                    if self.players[i].state is PlayerState.ACTIVE
+                    if not self.players[i].all_in
+                ]
+                active_players_before = [
+                    i
+                    for i in range(self.n_players)
+                    if i <= self.current_player_i
+                    if self.players[i].state is PlayerState.ACTIVE
+                    if not self.players[i].all_in
+                ]
                 if len(active_players_after) > 0:
                     self.next_player_i = min(active_players_after)
                 else:
                     self.next_player_i = min(active_players_before)
                 next_player = self.players[self.next_player_i]
-                if self.last_bet_placed_by is next_player or (self.first_to_act is next_player and self.last_bet_placed_by is None):
+                if self.last_bet_placed_by is next_player or (
+                    self.first_to_act is next_player and self.last_bet_placed_by is None
+                ):
                     self.street_finished = True
                     if len(active_players_before) > 0:
                         self.next_player_i = min(active_players_before)
@@ -198,7 +259,11 @@ class Table(gym.Env):
         if self.street_finished and not self.hand_is_over:
             self._street_transition()
 
-        obs = np.zeros(self.observation_space.shape[0]) if self.hand_is_over else self._get_observation(self.players[self.next_player_i])
+        obs = (
+            np.zeros(self.observation_space.shape[0])
+            if self.hand_is_over
+            else self._get_observation(self.players[self.next_player_i])
+        )
         rewards = np.asarray([player.get_reward() for player in sorted(self.players)])
         return obs, rewards, self.hand_is_over, {}
 
@@ -206,26 +271,43 @@ class Table(gym.Env):
         transitioned = False
         if self.street == GameState.PREFLOP:
             self.cards = self.deck.draw(3)
-            self._write_event("*** FLOP *** [%s %s %s]" %
-                              (Card.int_to_str(self.cards[0]), Card.int_to_str(self.cards[1]),
-                               Card.int_to_str(self.cards[2])))
+            self._write_event(
+                "*** FLOP *** [%s %s %s]"
+                % (
+                    Card.int_to_str(self.cards[0]),
+                    Card.int_to_str(self.cards[1]),
+                    Card.int_to_str(self.cards[2]),
+                )
+            )
             self.street = GameState.FLOP
             transitioned = True
         if self.street == GameState.FLOP and (not transitioned or transition_to_end):
             new = self.deck.draw(1)
             self.cards.append(new)
-            self._write_event("*** TURN *** [%s %s %s] [%s]" %
-                              (Card.int_to_str(self.cards[0]), Card.int_to_str(self.cards[1]),
-                               Card.int_to_str(self.cards[2]), Card.int_to_str(self.cards[3])))
+            self._write_event(
+                "*** TURN *** [%s %s %s] [%s]"
+                % (
+                    Card.int_to_str(self.cards[0]),
+                    Card.int_to_str(self.cards[1]),
+                    Card.int_to_str(self.cards[2]),
+                    Card.int_to_str(self.cards[3]),
+                )
+            )
             self.street = GameState.TURN
             transitioned = True
         if self.street == GameState.TURN and (not transitioned or transition_to_end):
             new = self.deck.draw(1)
             self.cards.append(new)
-            self._write_event("*** RIVER *** [%s %s %s %s] [%s]" %
-                              (Card.int_to_str(self.cards[0]), Card.int_to_str(self.cards[1]),
-                               Card.int_to_str(self.cards[2]), Card.int_to_str(self.cards[3]),
-                               Card.int_to_str(self.cards[4])))
+            self._write_event(
+                "*** RIVER *** [%s %s %s %s] [%s]"
+                % (
+                    Card.int_to_str(self.cards[0]),
+                    Card.int_to_str(self.cards[1]),
+                    Card.int_to_str(self.cards[2]),
+                    Card.int_to_str(self.cards[3]),
+                    Card.int_to_str(self.cards[4]),
+                )
+            )
             self.street = GameState.RIVER
             transitioned = True
         if self.street == GameState.RIVER and (not transitioned or transition_to_end):
@@ -251,63 +333,114 @@ class Table(gym.Env):
 
     def _history_initialize(self):
         t = time.localtime()
-        self.hand_history.append("PokerStars Hand #%d: Hold'em No Limit ($%.2f/$%.2f USD) - %d/%d/%d %d:%d:%d ET" %
-                            (np.random.randint(2230397, 32303976), SB, BB, t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour,
-                             t.tm_min, t.tm_sec))
+        self.hand_history.append(
+            "PokerStars Hand #%d: Hold'em No Limit ($%.2f/$%.2f USD) - %d/%d/%d %d:%d:%d ET"
+            % (
+                np.random.randint(2230397, 32303976),
+                SB,
+                BB,
+                t.tm_year,
+                t.tm_mon,
+                t.tm_mday,
+                t.tm_hour,
+                t.tm_min,
+                t.tm_sec,
+            )
+        )
         self.hand_history.append("Table 'Wempe III' 6-max Seat #2 is the button")
         for i, player in enumerate(self.players):
-            self.hand_history.append("Seat %d: %s ($%.2f in chips)" % (i+1, player.name, player.stack*BB))
+            self.hand_history.append(
+                "Seat %d: %s ($%.2f in chips)" % (i + 1, player.name, player.stack * BB)
+            )
 
     def _write_hole_cards(self):
         self.hand_history.append("*** HOLE CARDS ***")
         for i, player in enumerate(self.players):
             if self.track_single_player or player.identifier == 0:
-                self.hand_history.append("Dealt to %s [%s %s]" %
-                                    (player.name, Card.int_to_str(player.cards[0]), Card.int_to_str(player.cards[1])))
+                self.hand_history.append(
+                    "Dealt to %s [%s %s]"
+                    % (
+                        player.name,
+                        Card.int_to_str(player.cards[0]),
+                        Card.int_to_str(player.cards[1]),
+                    )
+                )
 
     def _write_show_down(self):
         self.hand_history.append("*** SHOW DOWN ***")
-        hand_types = [self.evaluator.class_to_string(self.evaluator.get_rank_class(p.hand_rank))
-                        for p in self.players if p.state is PlayerState.ACTIVE]
+        hand_types = [
+            self.evaluator.class_to_string(self.evaluator.get_rank_class(p.hand_rank))
+            for p in self.players
+            if p.state is PlayerState.ACTIVE
+        ]
         for player in self.players:
             if player.state is PlayerState.ACTIVE:
                 player.calculate_hand_rank(self.evaluator, self.cards)
-                player_hand_type = self.evaluator.class_to_string(self.evaluator.get_rank_class(player.hand_rank))
+                player_hand_type = self.evaluator.class_to_string(
+                    self.evaluator.get_rank_class(player.hand_rank)
+                )
                 matches = len([m for m in hand_types if m is player_hand_type])
                 multiple = matches > 1
-                self.hand_history.append("%s: shows [%s %s] (%s)" %
-                                    (player.name, Card.int_to_str(player.cards[0]), Card.int_to_str(player.cards[1]),
-                                     pretty_print_hand(player.cards, player_hand_type, self.cards, multiple))
-                                    )
+                self.hand_history.append(
+                    "%s: shows [%s %s] (%s)"
+                    % (
+                        player.name,
+                        Card.int_to_str(player.cards[0]),
+                        Card.int_to_str(player.cards[1]),
+                        pretty_print_hand(
+                            player.cards, player_hand_type, self.cards, multiple
+                        ),
+                    )
+                )
 
     def _finish_hand(self):
         for player in self.players:
             if self.hand_history_enabled:
                 if player.winnings_for_hh > 0:
-                    self._write_event("%s collected $%.2f from pot" % (player.name, player.winnings_for_hh*BB))
+                    self._write_event(
+                        "%s collected $%.2f from pot"
+                        % (player.name, player.winnings_for_hh * BB)
+                    )
 
         self._write_event("*** SUMMARY ***")
-        self._write_event("Total pot $%.2f | Rake $%.2f" % (self.pot*BB, 0))
+        self._write_event("Total pot $%.2f | Rake $%.2f" % (self.pot * BB, 0))
         if self.street == GameState.FLOP:
-            self._write_event("Board [%s %s %s]" %
-                                (Card.int_to_str(self.cards[0]), Card.int_to_str(self.cards[1]),
-                                 Card.int_to_str(self.cards[2]))
-                                )
+            self._write_event(
+                "Board [%s %s %s]"
+                % (
+                    Card.int_to_str(self.cards[0]),
+                    Card.int_to_str(self.cards[1]),
+                    Card.int_to_str(self.cards[2]),
+                )
+            )
         elif self.street == GameState.TURN:
-            self._write_event("Board [%s %s %s %s]" %
-                                (Card.int_to_str(self.cards[0]), Card.int_to_str(self.cards[1]),
-                                 Card.int_to_str(self.cards[2]), Card.int_to_str(self.cards[3]))
-                                )
+            self._write_event(
+                "Board [%s %s %s %s]"
+                % (
+                    Card.int_to_str(self.cards[0]),
+                    Card.int_to_str(self.cards[1]),
+                    Card.int_to_str(self.cards[2]),
+                    Card.int_to_str(self.cards[3]),
+                )
+            )
         elif self.street == GameState.RIVER:
-            self._write_event("Board [%s %s %s %s %s]" %
-                                (Card.int_to_str(self.cards[0]), Card.int_to_str(self.cards[1]),
-                                 Card.int_to_str(self.cards[2]), Card.int_to_str(self.cards[3]),
-                                 Card.int_to_str(self.cards[4]))
-                                )
+            self._write_event(
+                "Board [%s %s %s %s %s]"
+                % (
+                    Card.int_to_str(self.cards[0]),
+                    Card.int_to_str(self.cards[1]),
+                    Card.int_to_str(self.cards[2]),
+                    Card.int_to_str(self.cards[3]),
+                    Card.int_to_str(self.cards[4]),
+                )
+            )
         if self.hand_history_enabled and self.hand_history_location is not None:
-            with open('%s' % self.hand_history_location + 'handhistory_%s.txt' % time.time(), 'w') as f:
+            with open(
+                "%s" % self.hand_history_location + "handhistory_%s.txt" % time.time(),
+                "w",
+            ) as f:
                 for row in self.hand_history:
-                    f.writelines(row + '\n')
+                    f.writelines(row + "\n")
 
     def _distribute_pot(self):
         pot = 0
@@ -342,7 +475,10 @@ class Table(gym.Env):
             pot = 0
 
     def _is_action_valid(self, player, action, valid_actions):
-        action_list, bet_range = valid_actions['actions_list'], valid_actions['bet_range']
+        action_list, bet_range = (
+            valid_actions["actions_list"],
+            valid_actions["bet_range"],
+        )
 
         if action.action_type not in action_list:
             if PlayerAction.FOLD in action_list:
@@ -354,9 +490,14 @@ class Table(gym.Env):
                 player.check()
                 self._write_event("%s: checks" % player.name)
                 return False
-            raise Exception('Something went wrong when validating actions, invalid contents of valid_actions')
+            raise Exception(
+                "Something went wrong when validating actions, invalid contents of valid_actions"
+            )
         if action.action_type is PlayerAction.BET:
-            if not (approx_lte(bet_range[0], action.bet_amount) and approx_lte(action.bet_amount, bet_range[1])) or approx_gt(action.bet_amount, player.stack):
+            if not (
+                approx_lte(bet_range[0], action.bet_amount)
+                and approx_lte(action.bet_amount, bet_range[1])
+            ) or approx_gt(action.bet_amount, player.stack):
                 if PlayerAction.FOLD in action_list:
                     player.fold()
                     self.active_players -= 1
@@ -368,9 +509,20 @@ class Table(gym.Env):
         return True
 
     def _get_valid_actions(self, player):
-        valid_actions = [PlayerAction.CHECK, PlayerAction.FOLD, PlayerAction.BET, PlayerAction.CALL]
+        valid_actions = [
+            PlayerAction.CHECK,
+            PlayerAction.FOLD,
+            PlayerAction.BET,
+            PlayerAction.CALL,
+        ]
         valid_bet_range = [max(self.bet_to_match + self.minimum_raise, 1), player.stack]
-        others_active = [p for p in self.players if p.state is PlayerState.ACTIVE if not p.all_in if p is not player]
+        others_active = [
+            p
+            for p in self.players
+            if p.state is PlayerState.ACTIVE
+            if not p.all_in
+            if p is not player
+        ]
         if self.bet_to_match == 0:
             valid_actions.remove(PlayerAction.CALL)
             valid_actions.remove(PlayerAction.FOLD)
@@ -382,17 +534,17 @@ class Table(gym.Env):
         elif len(others_active) == 0:
             valid_bet_range = [0, 0]
             valid_actions.remove(PlayerAction.BET)
-        return {'actions_list': valid_actions, 'bet_range': valid_bet_range}
+        return {"actions_list": valid_actions, "bet_range": valid_bet_range}
 
     def _get_observation(self, player):
         observation = np.zeros(self.observation_space.shape[0], dtype=np.float32)
         observation[0] = player.identifier
 
         valid_actions = self._get_valid_actions(player)
-        for action in valid_actions['actions_list']:
-            observation[action.value+1] = 1
-        observation[5] = valid_actions['bet_range'][0]
-        observation[6] = valid_actions['bet_range'][1]
+        for action in valid_actions["actions_list"]:
+            observation[action.value + 1] = 1
+        observation[5] = valid_actions["bet_range"][0]
+        observation[6] = valid_actions["bet_range"][1]
 
         observation[7] = player.position
         observation[8] = Card.get_suit_int(player.cards[0])

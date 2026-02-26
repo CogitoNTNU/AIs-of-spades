@@ -39,12 +39,12 @@ class Player:
         self.has_acted = True
         self.acted_this_street = True
         self.state = PlayerState.FOLDED
-        self.history.append({'action': PlayerAction.FOLD, 'value': 0})
+        self.history.append({"action": PlayerAction.FOLD, "value": 0})
 
     def check(self):
         self.has_acted = True
         self.acted_this_street = True
-        self.history.append({'action': PlayerAction.CHECK, 'value': 0})
+        self.history.append({"action": PlayerAction.CHECK, "value": 0})
 
     def call(self, amount):
         self.has_acted = True
@@ -56,13 +56,13 @@ class Player:
             self.all_in = True
             self.bet_this_street += call_size
             self.money_in_pot += call_size
-            self.history.append({'action': PlayerAction.CALL, 'value': call_size})
+            self.history.append({"action": PlayerAction.CALL, "value": call_size})
             return call_size
         else:
             self.stack -= amount
             self.bet_this_street += amount
             self.money_in_pot += amount
-            self.history.append({'action': PlayerAction.CALL, 'value': amount})
+            self.history.append({"action": PlayerAction.CALL, "value": amount})
             return amount
 
     def bet(self, amount):
@@ -74,7 +74,7 @@ class Player:
         self.stack -= amount
         self.bet_this_street += amount
         self.money_in_pot += amount
-        self.history.append({'action': PlayerAction.BET, 'value': amount})
+        self.history.append({"action": PlayerAction.BET, "value": amount})
         return amount
 
     def punish_invalid_action(self):

@@ -286,9 +286,7 @@ class PokerNet(nn.Module):
         )
 
         # Heads
-        self.policy_head = nn.Linear(
-            trunk_hidden_dim, 3
-        )  # fold/call/raise logits
+        self.policy_head = nn.Linear(trunk_hidden_dim, 3)  # fold/call/raise logits
         self.value_head = nn.Linear(trunk_hidden_dim, 1)  # scalar value / score
         self.hand_state_head = nn.Linear(
             trunk_hidden_dim, hand_state_dim
