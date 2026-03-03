@@ -9,4 +9,5 @@ class PlayerAgent:
         observation = Observation(observation)
         return 
 
-    def reset()
+    def reset(self):
+        pass
