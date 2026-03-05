@@ -17,7 +17,7 @@ class Table(gym.Env):
     def __init__(
         self,
         n_players,
-        player_names=None,
+        players,
         track_single_player=False,
         stack_low=50,
         stack_high=200,
@@ -29,17 +29,9 @@ class Table(gym.Env):
         )
         self.observation_space = gym.spaces.Box(-math.inf, math.inf, (59, 1))
         self.n_players = n_players
-        if player_names is None:
-            player_names = {}
-        for player in range(6):
-            if player not in player_names.keys():
-                player_names[player] = "player_%d" % (player + 1)
-        self.all_players = [
-            Player(n, player_names[n], invalid_action_penalty) for n in range(6)
-        ]
         # If not None, tracked_player_i chooses which players private cards we write to the hand history (for tracking software)
         self.track_single_player = track_single_player
-        self.players = self.all_players[:n_players]
+        self.players = players
         self.active_players = n_players
         self.next_player_i = min(self.n_players - 1, 2)
         self.current_player_i = self.next_player_i
@@ -73,8 +65,6 @@ class Table(gym.Env):
         self.rng.shuffle(self.deck.cards)
         self.cards = []
         self.active_players = self.n_players
-        self.players = self.all_players[: self.n_players]
-        self.rng.shuffle(self.players)
         self.next_player_i = 0 if self.n_players == 2 else 2
         self.current_player_i = self.next_player_i
         self.first_to_act = None

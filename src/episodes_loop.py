@@ -17,14 +17,20 @@ class TrainingEpisode:
 
     def reset(self):
         active_opponents = rn.randint(1, 5)
-        opponents = [
-            PlayerAgent(WeightManager.get_opponent_weights())
-            for _ in range(active_opponents)
-        ]
-        main_character = PlayerAgent(WeightManager.get_updated_weights())
-        self.agents = [main_character] + opponents
-
         player_names = {0: MAIN_CHARACTER_NAME}
+
+        for player in range(6):
+            if player not in player_names.keys():
+                player_names[player] = "player_%d" % (player + 1)
+
+        self.agents = [
+            PlayerAgent(WeightManager.get_updated_weights(), 0, player_names[0])
+        ]
+
+        for n in range(1, active_opponents + 1):
+            self.agents.append(
+                PlayerAgent(WeightManager.get_opponent_weights(), n, player_names[n])
+            )
 
         # Bounds for randomizing player stack sizes in reset()
         low_stack_bbs = 50
@@ -33,7 +39,7 @@ class TrainingEpisode:
         invalid_action_penalty = 0
         self.table = Table(
             active_opponents + 1,
-            player_names=player_names,
+            players=self.agents,
             stack_low=low_stack_bbs,
             stack_high=high_stack_bbs,
             hand_history_location=hand_history_location,
@@ -41,15 +47,14 @@ class TrainingEpisode:
         )
         self.table.seed(1)
 
-    def play(self):
+    def play(self, total_iterations):
         self.reset()
 
         iteration = 1
-        while True:
+        while iteration < total_iterations:
             obs = Observation(self.table.reset())
             acting_player = self.agents[obs.player_identifier]
             while True:
-                
                 action = self.agents[acting_player].get_action(obs)
                 obs, reward, done, _ = self.table.step(action)
                 self.trajectory.append(
@@ -61,9 +66,6 @@ class TrainingEpisode:
                         reward = main_character.get_reward()
                         if reward:
                             self.reward += reward
-                else:
-                    # This step can be skipped unless invalid action penalty is enabled,
-                    # since we only get a reward when the pot is distributed, and the done flag is set
-                    agents[acting_player].rewards.append(reward[acting_player])
-                    acting_player = self.agents[obs.player_identifier]
+                    break
 
+        return self.reward
