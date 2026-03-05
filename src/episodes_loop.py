@@ -6,10 +6,14 @@ from weight_manager import WeightManager
 import pokerenv.obs_indices as indices
 
 
+MAIN_CHARACTER_NAME = "UGO"
+
+
 class TrainingEpisode:
     def __init__(self):
         self.reset()
         self.trajectory = []
+        self.reward = 0
 
     def reset(self):
         active_opponents = rn.randint(1, 5)
@@ -20,7 +24,7 @@ class TrainingEpisode:
         main_character = PlayerAgent(WeightManager.get_updated_weights())
         self.agents = [main_character] + opponents
 
-        player_names = {0: "TrackedAgent1"}
+        player_names = {0: MAIN_CHARACTER_NAME}
 
         # Bounds for randomizing player stack sizes in reset()
         low_stack_bbs = 50
@@ -42,24 +46,24 @@ class TrainingEpisode:
 
         iteration = 1
         while True:
-            acting_player = int(obs[indices.ACTING_PLAYER])
             obs = Observation(self.table.reset())
             acting_player = self.agents[obs.player_identifier]
             while True:
+                
                 action = self.agents[acting_player].get_action(obs)
                 obs, reward, done, _ = self.table.step(action)
                 self.trajectory.append(
                     (action.action_probability, action.bet_probability)
                 )
                 if done:
-                    # Distribute final rewards
-                    for i in range(active_players):
-                        agents[i].rewards.append(reward[i])
-                    break
+                    main_character = self.table.get_player_by_name(MAIN_CHARACTER_NAME)
+                    if main_character:
+                        reward = main_character.get_reward()
+                        if reward:
+                            self.reward += reward
                 else:
                     # This step can be skipped unless invalid action penalty is enabled,
                     # since we only get a reward when the pot is distributed, and the done flag is set
                     agents[acting_player].rewards.append(reward[acting_player])
-                    acting_player = int(obs[indices.ACTING_PLAYER])
-            iteration += 1
-            table.hand_history_enabled = False
+                    acting_player = self.agents[obs.player_identifier]
+

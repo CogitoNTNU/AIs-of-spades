@@ -1,3 +1,6 @@
+import numpy as np
+
+
 class CardObservation:
     def __init__(self, card):
         self.suit = card[0]
@@ -71,3 +74,7 @@ class Observation:
             OtherPlayerObservation(obs_matrix[29 + i : 29 + i + 6])
             for i in range(0, (len(obs_matrix) - 29) // 6, 6)
         ]
+
+    @staticmethod
+    def empty():
+        return Observation(np.zeros(59, dtype=np.float32))
