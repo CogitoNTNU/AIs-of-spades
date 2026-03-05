@@ -1,6 +1,3 @@
-from numpy import matrix
-
-
 class CardObservation:
     def __init__(self, card):
         self.suit = card[0]
