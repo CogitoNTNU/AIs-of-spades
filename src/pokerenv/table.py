@@ -6,6 +6,7 @@ from treys import Deck, Evaluator, Card
 from pokerenv.common import GameState, PlayerState, PlayerAction, TablePosition, Action
 from pokerenv.player import Player
 from pokerenv.utils import pretty_print_hand, approx_gt, approx_lte
+from observation import Observation
 
 # Just some values to make hand history work properly
 SB = 2.5
@@ -13,21 +14,24 @@ BB = 5
 
 
 class Table(gym.Env):
-    def __init__(self, n_players, player_names=None, track_single_player=False, stack_low=50, stack_high=200, hand_history_location='hands/', invalid_action_penalty=0):
-        self.action_space = gym.spaces.Tuple((gym.spaces.Discrete(4), gym.spaces.Box(-math.inf, math.inf, (1, 1))))
+    def __init__(
+        self,
+        n_players,
+        players,
+        track_single_player=False,
+        stack_low=50,
+        stack_high=200,
+        hand_history_location="hands/",
+        invalid_action_penalty=0,
+    ):
+        self.action_space = gym.spaces.Tuple(
+            (gym.spaces.Discrete(4), gym.spaces.Box(-math.inf, math.inf, (1, 1)))
+        )
         self.observation_space = gym.spaces.Box(-math.inf, math.inf, (59, 1))
         self.n_players = n_players
-        if player_names is None:
-            player_names = {}
-        for player in range(6):
-            if player not in player_names.keys():
-                player_names[player] = "player_%d" % (player + 1)
-        self.all_players = [
-            Player(n, player_names[n], invalid_action_penalty) for n in range(6)
-        ]
         # If not None, tracked_player_i chooses which players private cards we write to the hand history (for tracking software)
         self.track_single_player = track_single_player
-        self.players = self.all_players[:n_players]
+        self.players = players
         self.active_players = n_players
         self.next_player_i = min(self.n_players - 1, 2)
         self.current_player_i = self.next_player_i
@@ -61,8 +65,6 @@ class Table(gym.Env):
         self.rng.shuffle(self.deck.cards)
         self.cards = []
         self.active_players = self.n_players
-        self.players = self.all_players[: self.n_players]
-        self.rng.shuffle(self.players)
         self.next_player_i = 0 if self.n_players == 2 else 2
         self.current_player_i = self.next_player_i
         self.first_to_act = None
@@ -249,7 +251,7 @@ class Table(gym.Env):
             self._street_transition()
 
         obs = (
-            np.zeros(self.observation_space.shape[0])
+            Observation.empty()
             if self.hand_is_over
             else self._get_observation(self.players[self.next_player_i])
         )
@@ -274,18 +276,30 @@ class Table(gym.Env):
         if self.street == GameState.FLOP and (not transitioned or transition_to_end):
             new = self.deck.draw(1)
             self.cards = self.cards + new
-            self._write_event("*** TURN *** [%s %s %s] [%s]" %
-                              (Card.int_to_str(self.cards[0]), Card.int_to_str(self.cards[1]),
-                               Card.int_to_str(self.cards[2]), Card.int_to_str(self.cards[3])))
+            self._write_event(
+                "*** TURN *** [%s %s %s] [%s]"
+                % (
+                    Card.int_to_str(self.cards[0]),
+                    Card.int_to_str(self.cards[1]),
+                    Card.int_to_str(self.cards[2]),
+                    Card.int_to_str(self.cards[3]),
+                )
+            )
             self.street = GameState.TURN
             transitioned = True
         if self.street == GameState.TURN and (not transitioned or transition_to_end):
             new = self.deck.draw(1)
             self.cards = self.cards + new
-            self._write_event("*** RIVER *** [%s %s %s %s] [%s]" %
-                              (Card.int_to_str(self.cards[0]), Card.int_to_str(self.cards[1]),
-                               Card.int_to_str(self.cards[2]), Card.int_to_str(self.cards[3]),
-                               Card.int_to_str(self.cards[4])))
+            self._write_event(
+                "*** RIVER *** [%s %s %s %s] [%s]"
+                % (
+                    Card.int_to_str(self.cards[0]),
+                    Card.int_to_str(self.cards[1]),
+                    Card.int_to_str(self.cards[2]),
+                    Card.int_to_str(self.cards[3]),
+                    Card.int_to_str(self.cards[4]),
+                )
+            )
             self.street = GameState.RIVER
             transitioned = True
         if self.street == GameState.RIVER and (not transitioned or transition_to_end):
@@ -418,9 +432,7 @@ class Table(gym.Env):
                 "w",
             ) as f:
                 for row in self.hand_history:
-                    f.writelines(row + '\n')
-                    
-        # print(self.hand_history)
+                    f.writelines(row + "\n")
 
     def _distribute_pot(self):
         pot = 0
@@ -517,7 +529,7 @@ class Table(gym.Env):
         return {"actions_list": valid_actions, "bet_range": valid_bet_range}
 
     def _get_observation(self, player):
-        observation = np.zeros(self.observation_space.shape[0], dtype=np.float32)
+        observation = np.zeros(59, dtype=np.float32)
         observation[0] = player.identifier
 
         valid_actions = self._get_valid_actions(player)
@@ -553,3 +565,10 @@ class Table(gym.Env):
             observation[33 + i * 6] = others[i].bet_this_street
             observation[34 + i * 6] = int(others[i].all_in)
         return observation
+
+    def get_player_by_name(self, name):
+        for player in self.players:
+            if player.name == name:
+                return player
+
+        return None
