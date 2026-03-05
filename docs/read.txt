@@ -1,0 +1,31 @@
+[
+0)    2. -> Player identifier
+1)    0.    1.    1.    1. -> valid actions   
+5)    1.5  54.    -> bet range 
+7)    2.    -> Player position
+8)    4.    6.    2.    2. -> private cards
+12)    54.-> stack of player
+13)    0. -> money in the pot of the player
+14)    0. ->  current round bet in this street   
+15)    0.-> current street   
+16)    0.   0.    0.    0. -> fixed   
+26)    1.5 -> pot
+27) 1. -> bet to match
+28) 0.5 ->  minimum_raise
+--- player 1
+29) 0. -> current position
+
+1.  131.5   0.5   0.5   0.   
+--- player 2    
+    1.    1.  107.    1.    1.   0.    
+---- player 3
+0.   0.    0.    0.    0.    0.
+---- player 4 
+       0.    0.    0.    0.    0.    0. 
+--- player 5
+          0.
+   0.    0.    0.    0.    0. 
+   
+---- ??? Padding?
+   0.    0.    0.    0.    0. ]
+           
