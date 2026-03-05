@@ -7,33 +7,33 @@ import torch.nn as nn
 import torch.optim as optim
 from config import *
 
-
-
-def reset_env():
-    PN.reset_trajectories() #We added
-    batch_rewards = [] #We added (will not work)!!!
-    active_players = 6
-    agents = [ExampleRandomAgent() for _ in range(6)]
-    player_names = {0: 'TrackedAgent1', 1: 'Agent2'} # Rest are defaulted to player3, player4...
-    # Should we only log the 0th players (here TrackedAgent1) private cards to hand history files
-    
-
-for epoch in range(EPOCHS):
-    batch_trajectories = []
-    batch_rewards = []
-    for  ex in range(BATCH_SIZE):
-        reset_env()
-        done = False
-
 class LearningLoop():
     def __init__(self):
         self.optimizer = optim.Adam(
             list(PN.parameters()),
             lr=LEARNING_RATE
         )
-    
-    def compute_reward(self, final_stack, initial_stack=50):
-        return np.log(final_stack/initial_stack)
+    def start_learning():
+        for epoch in range(EPOCHS):
+            batch_trajectories = []
+            batch_rewards = []
+            for x in range(BATCH_SIZE):
+                reset_env()
+                episode=EpisodeLoop(HANDS_PER_EPISODE)
+                batch_trajectories.append(episode.get_trajectories())
+                batch_rewards.append(episode.get_rewards())
+
+            reward=compute_reward(batch_trajectories,batch_rewards)
+            result=gradient_decent(reward)
+            if epoch % 1000 == 0: 
+                save_to_file(result)
+
+
+    def compute_reward():
+        pass
+
+    def save_to_file():
+        pass
 
 if __name__ == "__main__":
     learning_loop = LearningLoop()
