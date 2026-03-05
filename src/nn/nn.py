@@ -1,7 +1,7 @@
 from typing import Literal, Tuple, Union
 import torch
 import torch.nn as nn
-
+from src.pokerenv.observation import Observation
 
 class CardsCNN(nn.Module):
     """
@@ -211,7 +211,8 @@ class PokerNet(nn.Module):
     bets_branch: BetsNN
     trunk: nn.Sequential
     policy_head: nn.Linear
-    value_head: nn.Linear
+    bet_mean_head: nn.Linear
+    bet_logvar_head: nn.Linear
     hand_state_head: nn.Linear
     game_state_head: nn.Linear
 
@@ -287,7 +288,8 @@ class PokerNet(nn.Module):
 
         # Heads
         self.policy_head = nn.Linear(trunk_hidden_dim, 3)  # fold/call/raise logits
-        self.value_head = nn.Linear(trunk_hidden_dim, 1)  # scalar value / score
+        self.bet_mean_head = nn.Linear(trunk_hidden_dim, 1)
+        self.bet_logvar_head = nn.Linear(trunk_hidden_dim, 1)
         self.hand_state_head = nn.Linear(
             trunk_hidden_dim, hand_state_dim
         )  # for feedback loop
@@ -295,39 +297,116 @@ class PokerNet(nn.Module):
             trunk_hidden_dim, game_state_dim
         )  # for feedback loop
 
+        self._hand_state = None
+        self._game_state = None
+
+        self.hand_state_dim = hand_state_dim
+        self.game_state_dim = game_state_dim
+
+    def initialize_internal_state(self, batch_size: int = 1):
+
+        device = next(self.parameters()).device
+
+        self._hand_state = torch.zeros(
+            batch_size, self.hand_state_dim, device=device
+        )
+
+        self._game_state = torch.zeros(
+            batch_size, self.game_state_dim, device=device
+        )
+
+    def preprocess_observation(self, observation: Observation) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Converts a single Observation object into card and betting tensors.
+        
+        Returns:
+            cards: [4, 4, 13] one-hot tensor for hand+table
+            bets: [bets_dim] tensor for numeric betting info
+        """
+        # --------- CARDS ---------
+        # We'll create a fixed 4x4x13 tensor for cards (hand + table)
+        card_tensor = torch.zeros((4, 4, 13), dtype=torch.float32)
+
+        # Encode hand cards (2 cards)
+        for i, card_obs in enumerate(observation.hand_cards.cards):
+            suit_idx = int(card_obs.suit)  # make sure suit is 0-3
+            rank_idx = int(card_obs.rank)  # make sure rank is 0-12
+            card_tensor[i // 4, i % 4, rank_idx] = 1.0  # simple one-hot rank, slot by slot
+
+        # Encode table cards (up to 5 cards)
+        for j, card_obs in enumerate(observation.table_cards.cards):
+            idx = j + len(observation.hand_cards.cards)
+            if idx >= 16:  # prevent overflow
+                break
+            card_tensor[idx // 4, idx % 4, int(card_obs.rank)] = 1.0
+
+        # --------- BETTING / NUMERIC INFO ---------
+        bets_list = []
+
+        # Player info
+        bets_list.append(float(observation.player_stack))
+        bets_list.append(float(observation.player_money_in_pot))
+        bets_list.append(float(observation.bet_this_street))
+        bets_list.append(float(observation.street))
+        
+        # Bet range
+        bets_list.append(float(observation.bet_range.lower_bound))
+        bets_list.append(float(observation.bet_range.upper_bound))
+        bets_list.append(float(observation.bet_to_match))
+        bets_list.append(float(observation.minimum_raise))
+        
+        # Actions as binary
+        actions = observation.actions
+        bets_list.extend([
+            float(actions.can_check()),
+            float(actions.can_fold()),
+            float(actions.can_bet()),
+            float(actions.can_call()),
+        ])
+
+        # Others
+        for other in observation.others:
+            bets_list.extend([
+                float(other.position),
+                float(other.state),
+                float(other.stack),
+                float(other.money_in_pot),
+                float(other.bet_this_street),
+                float(other.is_all_in)
+            ])
+
+        bets_tensor = torch.tensor(bets_list, dtype=torch.float32)
+
+        return card_tensor, bets_tensor
+
     def forward(
         self,
-        cards: torch.Tensor,
-        bets: torch.Tensor,
-        hand_state: torch.Tensor,
-        game_state: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Forward pass of the PokerNet.
+        observation: Observation,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
 
-        Args:
-            cards (torch.Tensor): [B, 4, 4, 13] Input card tensor.
-            bets (torch.Tensor): [B, bets_in_dim] Input betting tensor.
-            hand_state (torch.Tensor): [B, hand_state_dim] Input hand state tensor.
-            game_state (torch.Tensor): [B, game_state_dim] Input game state tensor.
+        if self._hand_state is None or self._game_state is None:
+            raise RuntimeError("Internal state not initialized.")
 
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-                - action_logits: [B, 3] Unnormalized logits for actions (fold, call, raise).
-                - value: [B, 1] Estimated value of the current state.
-                - next_hand_state: [B, hand_state_dim] Updated hand state for the next step.
-                - next_game_state: [B, game_state_dim] Updated game state for the next step.
-        """
+        # extract cards and bets from the observations
+        cards, bets = self.preprocess_observation(observation)
+
+        # branches
         fa = self.cards_branch(cards)
         fb = self.bets_branch(bets)
-        fs = self.state_branch(hand_state, game_state)
+        fs = self.state_branch(self._hand_state, self._game_state)
 
+        # fusion
         x = torch.cat([fa, fb, fs], dim=1)
         x = self.trunk(x)
 
-        action_logits = self.policy_head(x)  # softmax outside
-        value = self.value_head(x)
-        next_hand_state = torch.tanh(self.hand_state_head(x))
-        next_game_state = torch.tanh(self.game_state_head(x))
+        action_logits = self.policy_head(x)
 
-        return action_logits, value, next_hand_state, next_game_state
+        bet_mean = self.bet_mean_head(x)
+        bet_logvar = self.bet_logvar_head(x)
+        bet_variance = torch.exp(bet_logvar)
+
+        # update internal state
+        self._hand_state = torch.tanh(self.hand_state_head(x))
+        self._game_state = torch.tanh(self.game_state_head(x))
+
+        return action_logits, bet_mean, bet_variance
