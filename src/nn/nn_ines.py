@@ -22,6 +22,7 @@ from typing import Literal, Tuple, Union
 import torch
 import torch.nn as nn
 from src.pokerenv.observation import Observation
+from types import SimpleNamespace
 
 class CardsCNN(nn.Module):
     """
@@ -232,7 +233,7 @@ class LookaheadPlanner:
 
         for i, action in enumerate(actions):
 
-            if probs[i] < 1e-6:
+            if probs[0, i].item() < 1e-6:
                 continue
 
             # clone environment
@@ -244,7 +245,8 @@ class LookaheadPlanner:
                 v = reward
             else:
                 with torch.no_grad():
-                    _, _, _, v = self.model(next_obs)
+                    _, _, _, v_tensor = self.model(next_obs)
+                    v = v_tensor.item()
 
             if v > best_value:
                 best_value = v
@@ -477,7 +479,7 @@ class PokerNet(nn.Module):
     
 
 
-    # ================ TESTING ================
+# ================ TESTING ================
 
 def test_pokernet_forward():
 
@@ -529,4 +531,69 @@ value: [1,1]
 
 '''
 
-test_pokernet_forward()
+# =============== Planner test ===============
+
+
+def dummy_obs():
+    """
+    Creates a nested dummy observation object that matches 
+    the requirements of PokerNet.preprocess_observation.
+    """
+    return SimpleNamespace(
+        # Cards (Empty lists for speed, but valid for the loop)
+        hand_cards=SimpleNamespace(cards=[]),
+        table_cards=SimpleNamespace(cards=[]),
+        
+        # Numeric State
+        player_stack=100.0,
+        player_money_in_pot=10.0,
+        bet_this_street=5.0,
+        street=2, # Flop
+        
+        # Range/Constraints
+        bet_range=SimpleNamespace(lower_bound=2.0, upper_bound=100.0),
+        bet_to_match=5.0,
+        minimum_raise=10.0,
+        
+        # Actions (Mocking the can_ methods)
+        actions=SimpleNamespace(
+            can_check=lambda: True,
+            can_fold=lambda: True,
+            can_bet=lambda: True,
+            can_call=lambda: True
+        ),
+        
+        # Others (Empty for now to match your 12-dim input)
+        others=[]
+    )
+
+class FakeEnv:
+
+    def clone(self):
+        return FakeEnv()
+
+    def step(self, action):
+        obs = dummy_obs()
+        reward = torch.tensor(0.0)
+        done = False
+        return obs, reward, done, {}
+
+def test_planner():
+
+    env = FakeEnv()
+
+    model = PokerNet()
+    model.initialize_internal_state()
+
+    planner = LookaheadPlanner(model, env)
+
+    obs = dummy_obs()
+
+    action = planner.choose_action(obs)
+
+    print("chosen action:", action)
+
+'''
+expected output:
+chosen action: call
+'''
