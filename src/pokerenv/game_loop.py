@@ -1,14 +1,14 @@
 import random as rn
-import PlayerAgent
+from pokerenv.player_agent import PlayerAgent
 from pokerenv.table import Table
 from pokerenv.observation import Observation
-from weight_manager import WeightManager
+from pokerenv.weight_manager import WeightManager
 import pokerenv.obs_indices as indices
 
 MAIN_CHARACTER_NAME = "UGO"
 
 class Game:
-    def __init__(self, weight_manager: WeightManager, current_model, ):
+    def __init__(self, weight_manager: WeightManager, current_model):
         self.weight_manager = weight_manager
         self.current_model = current_model
 
@@ -24,12 +24,12 @@ class Game:
                 player_names[player] = "player_%d" % (player + 1)
 
         self.agents = [
-            PlayerAgent(self.current_model, 0, player_names[0])
+            PlayerAgent(0, player_names[0], 0, self.current_model)
         ]
 
         for n in range(1, active_opponents + 1):
             self.agents.append(
-                PlayerAgent(self.weight_manager.sample_opponent(), n, player_names[n])
+                PlayerAgent(n, player_names[n], 0, self.weight_manager.sample_opponent())
             )
 
         # Bounds for randomizing player stack sizes in reset()
@@ -53,7 +53,8 @@ class Game:
         iteration = 1
         while iteration < total_iterations:
             obs = Observation(self.table.reset())
-            acting_player = self.agents[obs.player_identifier]
+            # acting_player = self.agents[int(obs.player_identifier)]
+            acting_player = int(obs.player_identifier)
             while True:
                 action = self.agents[acting_player].get_action(obs)
                 obs, reward, done, _ = self.table.step(action)

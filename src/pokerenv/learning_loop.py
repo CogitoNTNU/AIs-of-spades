@@ -1,9 +1,7 @@
-from src.weight_manager import WeightManager
-from game_loop import Game
+from pokerenv.weight_manager import WeightManager
+from pokerenv.game_loop import Game
 import torch
-import torch.nn as nn
 import torch.optim as optim
-from pokerenv import OpponentPool
 
 class LearningLoop:
     def __init__(self, weight_manager: WeightManager, config):
@@ -12,6 +10,7 @@ class LearningLoop:
 
         # initialize the current model (PN) with random weights
         self.current_model = config["weight_manager"]["model_class"]()
+        self.current_model.initialize_internal_state()
 
         self.optimizer = optim.Adam(
             list(self.current_model.parameters()),

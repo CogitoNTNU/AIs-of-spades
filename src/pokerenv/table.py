@@ -6,7 +6,7 @@ from treys import Deck, Evaluator, Card
 from pokerenv.common import GameState, PlayerState, PlayerAction, TablePosition, Action
 from pokerenv.player import Player
 from pokerenv.utils import pretty_print_hand, approx_gt, approx_lte
-from observation import Observation
+from pokerenv.observation import Observation
 
 # Just some values to make hand history work properly
 SB = 2.5
@@ -114,18 +114,21 @@ class Table(gym.Env):
                 player.fold()
                 self.active_players -= 1
                 self._write_event("%s: folds" % player.name)
-            elif action.action_type is PlayerAction.CHECK:
-                player.check()
-                self._write_event("%s: checks" % player.name)
+            # elif action.action_type is PlayerAction.CHECK:
+                # player.check()
+                # self._write_event("%s: checks" % player.name)
             elif action.action_type is PlayerAction.CALL:
-                call_size = player.call(self.bet_to_match)
+                call_size = player.check_or_call(self.bet_to_match)
                 self.pot += call_size
-                if player.all_in:
-                    self._write_event(
-                        "%s: calls $%.2f and is all-in" % (player.name, call_size * BB)
-                    )
+                if self.bet_to_match == 0:
+                    self._write_event("%s: checks" % player.name)
                 else:
-                    self._write_event("%s: calls $%.2f" % (player.name, call_size * BB))
+                    if player.all_in:
+                        self._write_event(
+                            "%s: calls $%.2f and is all-in" % (player.name, call_size * BB)
+                        )
+                    else:
+                        self._write_event("%s: calls $%.2f" % (player.name, call_size * BB))
             elif action.action_type is PlayerAction.BET:
                 previous_bet_this_street = player.bet_this_street
                 actual_bet_size = player.bet(np.round(action.bet_amount, 2))
@@ -466,6 +469,8 @@ class Table(gym.Env):
                 break
             pot = 0
 
+    # IMPORTANT: for the moment if the action is not in the list we are gonna fold or check/call
+    # but if the bet is not in the right range we are gonna just fold
     def _is_action_valid(self, player, action, valid_actions):
         action_list, bet_range = (
             valid_actions["actions_list"],
@@ -478,9 +483,22 @@ class Table(gym.Env):
                 self.active_players -= 1
                 self._write_event("%s: folds" % player.name)
                 return False
-            if PlayerAction.CHECK in action_list:
-                player.check()
-                self._write_event("%s: checks" % player.name)
+            # if PlayerAction.CHECK in action_list:
+            #     player.check()
+            #     self._write_event("%s: checks" % player.name)
+            #     return False
+            if PlayerAction.CALL in action_list:
+                call_size = player.check_or_call(self.bet_to_match)
+                self.pot += call_size
+                if self.bet_to_match == 0:
+                    self._write_event("%s: checks" % player.name)
+                else:
+                    if player.all_in:
+                        self._write_event(
+                            "%s: calls $%.2f and is all-in" % (player.name, call_size * BB)
+                        )
+                    else:
+                        self._write_event("%s: calls $%.2f" % (player.name, call_size * BB))
                 return False
             raise Exception(
                 "Something went wrong when validating actions, invalid contents of valid_actions"
@@ -494,15 +512,15 @@ class Table(gym.Env):
                     player.fold()
                     self.active_players -= 1
                     self._write_event("%s: folds" % player.name)
-                else:
-                    player.check()
-                    self._write_event("%s: checks" % player.name)
+                # else:
+                #     player.check()
+                #     self._write_event("%s: checks" % player.name)
                 return False
         return True
 
     def _get_valid_actions(self, player):
         valid_actions = [
-            PlayerAction.CHECK,
+            # PlayerAction.CHECK,
             PlayerAction.FOLD,
             PlayerAction.BET,
             PlayerAction.CALL,
@@ -516,10 +534,10 @@ class Table(gym.Env):
             if p is not player
         ]
         if self.bet_to_match == 0:
-            valid_actions.remove(PlayerAction.CALL)
+            # valid_actions.remove(PlayerAction.CALL)
             valid_actions.remove(PlayerAction.FOLD)
-        if self.bet_to_match != 0:
-            valid_actions.remove(PlayerAction.CHECK)
+        # if self.bet_to_match != 0:
+            # valid_actions.remove(PlayerAction.CHECK)
         if player.stack < max(self.bet_to_match + self.minimum_raise, 1):
             valid_bet_range = [0, 0]
             valid_actions.remove(PlayerAction.BET)
