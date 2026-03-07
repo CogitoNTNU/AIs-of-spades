@@ -5,22 +5,33 @@ from pokerenv.observation import Observation
 from weight_manager import WeightManager
 import pokerenv.obs_indices as indices
 
+MAIN_CHARACTER_NAME = "UGO"
 
-class TrainingEpisode:
-    def __init__(self):
-        self.reset()
+
+class Game:
+    def __init__(self, weight_manager: WeightManager, current_model, ):
+        self.weight_manager = weight_manager
+        self.current_model = current_model
+
         self.trajectory = []
+        self.reset()
 
     def reset(self):
         active_opponents = rn.randint(1, 5)
-        opponents = [
-            PlayerAgent(WeightManager.get_opponent_weights())
-            for _ in range(active_opponents)
-        ]
-        main_character = PlayerAgent(WeightManager.get_updated_weights())
-        self.agents = [main_character] + opponents
+        player_names = {0: MAIN_CHARACTER_NAME}
 
-        player_names = {0: "TrackedAgent1"}
+        for player in range(6):
+            if player not in player_names.keys():
+                player_names[player] = "player_%d" % (player + 1)
+
+        self.agents = [
+            PlayerAgent(self.current_model, 0, player_names[0])
+        ]
+
+        for n in range(1, active_opponents + 1):
+            self.agents.append(
+                PlayerAgent(self.weight_manager.sample_opponent(), n, player_names[n])
+            )
 
         # Bounds for randomizing player stack sizes in reset()
         low_stack_bbs = 50
@@ -37,12 +48,11 @@ class TrainingEpisode:
         )
         self.table.seed(1)
 
-    def play(self):
+    def play(self, total_iterations):
         self.reset()
 
         iteration = 1
-        while True:
-            acting_player = int(obs[indices.ACTING_PLAYER])
+        while iteration < total_iterations:
             obs = Observation(self.table.reset())
             acting_player = self.agents[obs.player_identifier]
             while True:
@@ -52,14 +62,11 @@ class TrainingEpisode:
                     (action.action_probability, action.bet_probability)
                 )
                 if done:
-                    # Distribute final rewards
-                    for i in range(active_players):
-                        agents[i].rewards.append(reward[i])
+                    main_character = self.table.get_player_by_name(MAIN_CHARACTER_NAME)
+                    if main_character:
+                        reward = main_character.get_reward()
+                        if reward:
+                            self.reward += reward
                     break
-                else:
-                    # This step can be skipped unless invalid action penalty is enabled,
-                    # since we only get a reward when the pot is distributed, and the done flag is set
-                    agents[acting_player].rewards.append(reward[acting_player])
-                    acting_player = int(obs[indices.ACTING_PLAYER])
-            iteration += 1
-            table.hand_history_enabled = False
+
+        return self.reward
