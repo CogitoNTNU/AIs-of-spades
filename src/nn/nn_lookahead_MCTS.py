@@ -1,0 +1,715 @@
+'''
+Multi-Step Planning
+
+The goal is to turn the model from a pure reactive policy,
+into something that can simulate possible future actions before choosing.
+
+From:
+    Observation → PokerNet → Action
+
+To:
+    Observation
+    ↓
+    simulate possible actions
+    ↓
+    evaluate resulting states with PokerNet
+    ↓
+    choose best action
+'''
+
+
+from typing import Literal, Tuple, Union
+import torch
+import torch.nn as nn
+from src.pokerenv.observation import Observation
+from types import SimpleNamespace
+
+class CardsCNN(nn.Module):
+    """
+    CNN for processing card information.
+    Expects input of shape [B, 4, 4, 13] representing cards in a 2D grid.
+    """
+
+    net: nn.Sequential
+    proj: nn.Linear
+
+    def __init__(self, out_dim: int = 128) -> None:
+        """
+        Initializes the CardsCNN.
+
+        Args:
+            out_dim (int): The dimension of the output vector.
+        """
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(
+                in_channels=4, out_channels=16, kernel_size=3, padding=1
+            ),  # [B,16,4,13]
+            nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),  # [B,32,4,13]
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1)),  # [B,32,1,1]
+        )
+        self.proj = nn.Linear(32, out_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the CardsCNN.
+
+        Args:
+            x (torch.Tensor): [B, 4, 4, 13] Input tensor.
+
+        Returns:
+            torch.Tensor: [B, out_dim] Output tensor.
+        """
+        x = self.net(x)
+        x = x.flatten(1)  # [B,32]
+        x = self.proj(x)  # [B,out_dim]
+        return x
+
+
+class StateFusionBranchedNN(nn.Module):
+    """
+    Neural network for fusing hand and game states using separate branches.
+    """
+
+    hand_branch: nn.Sequential
+    game_branch: nn.Sequential
+    net: nn.Sequential
+
+    def __init__(
+        self,
+        hand_in_dim: int,
+        game_in_dim: int,
+        hidden_dim: int = 64,
+        out_dim: int = 32,
+    ) -> None:
+        """
+        Initializes the StateFusionBranchedNN.
+
+        Args:
+            hand_in_dim (int): Dimension of the input hand state.
+            game_in_dim (int): Dimension of the input game state.
+            hidden_dim (int): Dimension of the hidden layers.
+            out_dim (int): Dimension of the output vector.
+        """
+        super().__init__()
+        self.hand_branch = nn.Sequential(
+            nn.Linear(hand_in_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+        )
+
+        self.game_branch = nn.Sequential(
+            nn.Linear(game_in_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+        )
+
+        self.net = nn.Sequential(
+            nn.Linear(hidden_dim + hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, out_dim),
+        )
+
+    def forward(self, hand: torch.Tensor, game: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the StateFusionBranchedNN.
+
+        Args:
+            hand (torch.Tensor): [B, hand_in_dim] Input hand state tensor.
+            game (torch.Tensor): [B, game_in_dim] Input game state tensor.
+
+        Returns:
+            torch.Tensor: [B, out_dim] Fused state tensor.
+        """
+        fh = self.hand_branch(hand)
+        fg = self.game_branch(game)
+        x = torch.cat([fh, fg], dim=1)
+        return self.net(x)
+
+
+class StateFusionNN(nn.Module):
+    """
+    Neural network for fusing hand and game states by concatenating them.
+    """
+
+    net: nn.Sequential
+
+    def __init__(
+        self,
+        hand_in_dim: int,
+        game_in_dim: int,
+        hidden_dim: int = 64,
+        out_dim: int = 32,
+    ) -> None:
+        """
+        Initializes the StateFusionNN.
+
+        Args:
+            hand_in_dim (int): Dimension of the input hand state.
+            game_in_dim (int): Dimension of the input game state.
+            hidden_dim (int): Dimension of the hidden layers.
+            out_dim (int): Dimension of the output vector.
+        """
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(hand_in_dim + game_in_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, out_dim),
+        )
+
+    def forward(self, hand: torch.Tensor, game: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the StateFusionNN.
+
+        Args:
+            hand (torch.Tensor): [B, hand_in_dim] Input hand state tensor.
+            game (torch.Tensor): [B, game_in_dim] Input game state tensor.
+
+        Returns:
+            torch.Tensor: [B, out_dim] Fused state tensor.
+        """
+        x = torch.cat([hand, game], dim=1)
+        return self.net(x)
+
+
+class BetsNN(nn.Module):
+    """
+    Neural network for processing betting information.
+    """
+
+    net: nn.Sequential
+
+    def __init__(
+        self, in_dim: int = 128, hidden_dim: int = 64, out_dim: int = 32
+    ) -> None:
+        """
+        Initializes the BetsNN.
+
+        Args:
+            in_dim (int): Dimension of the input betting vector.
+            hidden_dim (int): Dimension of the hidden layers.
+            out_dim (int): Dimension of the output vector.
+        """
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, out_dim),
+            nn.ReLU(),
+        )
+
+    def forward(self, bets: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the BetsNN.
+
+        Args:
+            bets (torch.Tensor): [B, in_dim] Input betting tensor.
+
+        Returns:
+            torch.Tensor: [B, out_dim] Processed betting features.
+        """
+        return self.net(bets)
+
+class LookaheadPlanner:
+
+    def __init__(self, model, env):
+        self.model = model
+        self.env = env
+
+    def choose_action(self, observation):
+
+        logits, bet_mean, bet_var, value = self.model(observation)
+
+        probs = torch.softmax(logits, dim=-1)
+
+        actions = ["fold", "call", "raise"]
+
+        best_action = None
+        best_value = -1e9
+
+        for i, action in enumerate(actions):
+
+            if probs[0, i].item() < 1e-6:
+                continue
+
+            # clone environment
+            env_copy = self.env.clone()
+
+            next_obs, reward, done, _ = env_copy.step(action)
+
+            if done:
+                v = reward
+            else:
+                with torch.no_grad():
+                    _, _, _, v_tensor = self.model(next_obs)
+                    v = v_tensor.item()
+
+            if v > best_value:
+                best_value = v
+                best_action = action
+
+        return best_action
+
+class MCTSNode:
+
+    def __init__(self, observation, env, prior=0.0):
+        self.observation = observation
+        self.env = env
+        self.prior = prior
+
+        self.value_sum = 0.0
+        self.visit_count = 0
+
+        self.children = {}
+        self.is_expanded = False
+
+    def value(self):
+        return 0 if self.visit_count == 0 else self.value_sum / self.visit_count
+
+
+def ucb_score(parent, child, c_puct=1.5):
+    exploration = c_puct * child.prior * (
+        (parent.visit_count ** 0.5) / (1 + child.visit_count)
+    )
+    return child.value() + exploration
+
+
+class MCTSPlanner:
+
+    def __init__(self, model, env, simulations=25):
+        self.model = model
+        self.env = env
+        self.simulations = simulations
+
+    def run(self, observation):
+
+        root = MCTSNode(observation, self.env.clone())
+        self.expand(root)
+
+        for _ in range(self.simulations):
+
+            node = root
+            path = [node]
+
+            # Selection
+            while node.is_expanded and node.children:
+                node = self.select_child(node)
+                path.append(node)
+
+            # Evaluation
+            value, done = self.evaluate(node)
+
+            # Expansion
+            if not done:
+                self.expand(node)
+
+            # Backpropagation
+            self.backpropagate(path, value)
+
+        return self.select_action(root)
+
+    def select_child(self, node):
+        return max(node.children.values(),
+                   key=lambda child: ucb_score(node, child))
+
+    def evaluate(self, node):
+        _, _, _, value = self.model(node.observation)
+        return value.item(), False
+
+    def backpropagate(self, path, value):
+        for node in reversed(path):
+            node.visit_count += 1
+            node.value_sum += value
+
+    def expand(self, node):
+
+        logits, _, _, _ = self.model(node.observation)
+        probs = torch.softmax(logits, dim=-1)[0]
+
+        actions = ["fold", "call", "raise"]
+        node.is_expanded = True
+
+        for i, action in enumerate(actions):
+
+            env_copy = node.env.clone()
+            next_obs, _, _, _ = env_copy.step(action)
+
+            node.children[action] = MCTSNode(
+                next_obs,
+                env_copy,
+                prior=probs[i].item()
+            )
+
+    def select_action(self, root):
+        return max(root.children.items(),
+                   key=lambda x: x[1].visit_count)[0]
+     
+class PokerNet(nn.Module):
+    """
+    Integrated Poker network that combines cards, bets, and game state.
+
+    Structure:
+    - cards_branch (CardsCNN): Processes card information.
+    - bets_branch (BetsNN): Processes betting information.
+    - state_branch (StateFusionNN or StateFusionBranchedNN): Fuses hand and game states.
+    - trunk: Fuses outputs from all branches.
+    - Heads: Predicts action logits, value, and next states.
+    """
+
+    cards_branch: CardsCNN
+    state_branch: Union[StateFusionNN, StateFusionBranchedNN]
+    bets_branch: BetsNN
+    trunk: nn.Sequential
+    policy_head: nn.Linear
+    bet_mean_head: nn.Linear
+    bet_logvar_head: nn.Linear
+    hand_state_head: nn.Linear
+    game_state_head: nn.Linear
+
+    def __init__(
+        self,
+        # BetsNN params
+        bets_in_dim: int = 12,
+        bets_hidden_dim: int = 64,
+        bets_out_dim: int = 32,
+        # CardsCNN params
+        cards_out_dim: int = 64,
+        # StateNN params
+        hand_state_dim: int = 32,
+        game_state_dim: int = 32,
+        state_hidden_dim: int = 64,
+        state_out_dim: int = 32,
+        # Fusion trunk params
+        trunk_hidden_dim: int = 128,
+        *,
+        state_mode: Literal["simple", "branched"] = "simple",
+    ) -> None:
+        """
+        Initializes the PokerNet.
+
+        Args:
+            bets_in_dim (int): Input dimension for BetsNN.
+            bets_hidden_dim (int): Hidden dimension for BetsNN.
+            bets_out_dim (int): Output dimension for BetsNN.
+            cards_out_dim (int): Output dimension for CardsCNN.
+            hand_state_dim (int): Dimension for hand state.
+            game_state_dim (int): Dimension for game state.
+            state_hidden_dim (int): Hidden dimension for StateNN.
+            state_out_dim (int): Output dimension for StateNN.
+            trunk_hidden_dim (int): Hidden dimension for the fusion trunk.
+            state_mode (Literal["simple", "branched"]): Mode for state fusion.
+        """
+        super().__init__()
+        self.value_head = nn.Linear(trunk_hidden_dim, 1)
+
+        if state_mode == "simple":
+            state_nn = StateFusionNN
+        elif state_mode == "branched":
+            state_nn = StateFusionBranchedNN
+        else:
+            raise ValueError(
+                f"Invalid state_mode={state_mode!r}. Use 'simple' or 'branched'."
+            )
+
+        self.cards_branch = CardsCNN(
+            cards_out_dim,
+        )
+        self.state_branch = state_nn(
+            hand_state_dim,
+            game_state_dim,
+            state_hidden_dim,
+            state_out_dim,
+        )
+        self.bets_branch = BetsNN(
+            bets_in_dim,
+            bets_hidden_dim,
+            bets_out_dim,
+        )
+
+        # Fusion trunk
+        self.trunk = nn.Sequential(
+            nn.Linear(
+                cards_out_dim + bets_out_dim + state_out_dim,
+                trunk_hidden_dim,
+            ),
+            nn.ReLU(),
+            nn.Linear(trunk_hidden_dim, trunk_hidden_dim),
+            nn.ReLU(),
+        )
+
+        # Heads
+        self.policy_head = nn.Linear(trunk_hidden_dim, 3)  # fold/call/raise logits
+        self.bet_mean_head = nn.Linear(trunk_hidden_dim, 1)
+        self.bet_logvar_head = nn.Linear(trunk_hidden_dim, 1)
+        self.hand_state_head = nn.Linear(
+            trunk_hidden_dim, hand_state_dim
+        )  # for feedback loop
+        self.game_state_head = nn.Linear(
+            trunk_hidden_dim, game_state_dim
+        )  # for feedback loop
+
+        self._hand_state = None
+        self._game_state = None
+
+        self.hand_state_dim = hand_state_dim
+        self.game_state_dim = game_state_dim
+
+    def initialize_internal_state(self, batch_size: int = 1):
+
+        device = next(self.parameters()).device
+
+        self._hand_state = torch.zeros(
+            batch_size, self.hand_state_dim, device=device
+        )
+
+        self._game_state = torch.zeros(
+            batch_size, self.game_state_dim, device=device
+        )
+
+    def preprocess_observation(self, observation: Observation) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Converts a single Observation object into card and betting tensors.
+        
+        Returns:
+            cards: [4, 4, 13] one-hot tensor for hand+table
+            bets: [bets_dim] tensor for numeric betting info
+        """
+        # --------- CARDS ---------
+        # We'll create a fixed 4x4x13 tensor for cards (hand + table)
+        card_tensor = torch.zeros((4, 4, 13), dtype=torch.float32)
+
+        # Encode hand cards (2 cards)
+        for i, card_obs in enumerate(observation.hand_cards.cards):
+            suit_idx = int(card_obs.suit)  # make sure suit is 0-3
+            rank_idx = int(card_obs.rank)  # make sure rank is 0-12
+            card_tensor[i // 4, i % 4, rank_idx] = 1.0  # simple one-hot rank, slot by slot
+
+        # Encode table cards (up to 5 cards)
+        for j, card_obs in enumerate(observation.table_cards.cards):
+            idx = j + len(observation.hand_cards.cards)
+            if idx >= 16:  # prevent overflow
+                break
+            card_tensor[idx // 4, idx % 4, int(card_obs.rank)] = 1.0
+
+        # --------- BETTING / NUMERIC INFO ---------
+        bets_list = []
+
+        # Player info
+        bets_list.append(float(observation.player_stack))
+        bets_list.append(float(observation.player_money_in_pot))
+        bets_list.append(float(observation.bet_this_street))
+        bets_list.append(float(observation.street))
+        
+        # Bet range
+        bets_list.append(float(observation.bet_range.lower_bound))
+        bets_list.append(float(observation.bet_range.upper_bound))
+        bets_list.append(float(observation.bet_to_match))
+        bets_list.append(float(observation.minimum_raise))
+        
+        # Actions as binary
+        actions = observation.actions
+        bets_list.extend([
+            float(actions.can_check()),
+            float(actions.can_fold()),
+            float(actions.can_bet()),
+            float(actions.can_call()),
+        ])
+
+        # Others
+        for other in observation.others:
+            bets_list.extend([
+                float(other.position),
+                float(other.state),
+                float(other.stack),
+                float(other.money_in_pot),
+                float(other.bet_this_street),
+                float(other.is_all_in)
+            ])
+
+        bets_tensor = torch.tensor(bets_list, dtype=torch.float32)
+
+        return card_tensor, bets_tensor
+
+    def forward(
+        self,
+        observation: Observation,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+        if self._hand_state is None or self._game_state is None:
+            raise RuntimeError("Internal state not initialized.")
+
+        # extract cards and bets from the observations
+        cards, bets = self.preprocess_observation(observation)
+
+        # branch dimension [B, ...] ; B=1
+        cards = cards.unsqueeze(0)  # Becomes [1, 4, 4, 13]
+        bets = bets.unsqueeze(0)   # Becomes [1, 12]
+
+        # branches
+        fa = self.cards_branch(cards)
+        fb = self.bets_branch(bets)
+        fs = self.state_branch(self._hand_state, self._game_state)
+
+        # fusion
+        x = torch.cat([fa, fb, fs], dim=1)
+        x = self.trunk(x)
+        value = self.value_head(x)
+        
+        action_logits = self.policy_head(x)
+
+        bet_mean = self.bet_mean_head(x)
+        bet_logvar = self.bet_logvar_head(x)
+        bet_variance = torch.exp(bet_logvar)
+
+        # update internal state
+        self._hand_state = torch.tanh(self.hand_state_head(x))
+        self._game_state = torch.tanh(self.game_state_head(x))
+
+        return action_logits, bet_mean, bet_variance, value
+    
+
+
+# ================ TESTING ================
+
+def test_pokernet_forward():
+
+    model = PokerNet()
+
+    model.initialize_internal_state()
+
+    class DummyObs:
+        pass
+
+    obs = DummyObs()
+
+    obs.hand_cards = type("x", (), {"cards": []})()
+    obs.table_cards = type("x", (), {"cards": []})()
+
+    obs.player_stack = 100
+    obs.player_money_in_pot = 5
+    obs.bet_this_street = 2
+    obs.street = 1
+
+    obs.bet_range = type("x", (), {"lower_bound":0,"upper_bound":100})()
+
+    obs.bet_to_match = 2
+    obs.minimum_raise = 4
+
+    obs.actions = type("x", (), {
+        "can_check": lambda _: 1,
+        "can_fold": lambda _: 1,
+        "can_bet": lambda _: 1,
+        "can_call": lambda _: 1
+    })()
+
+    obs.others = []
+
+    logits, mean, var, value = model(obs)
+
+    print("logits:", logits.shape)
+    print("bet_mean:", mean.shape)
+    print("variance:", var.shape)
+    print("value:", value.shape)
+
+'''
+Expected output:
+
+logits: [1,3]
+bet_mean: [1,1]
+variance: [1,1]
+value: [1,1]
+
+'''
+
+# =============== Planner test ===============
+
+
+def dummy_obs():
+    """
+    Creates a nested dummy observation object that matches 
+    the requirements of PokerNet.preprocess_observation.
+    """
+    return SimpleNamespace(
+        # Cards (Empty lists for speed, but valid for the loop)
+        hand_cards=SimpleNamespace(cards=[]),
+        table_cards=SimpleNamespace(cards=[]),
+        
+        # Numeric State
+        player_stack=100.0,
+        player_money_in_pot=10.0,
+        bet_this_street=5.0,
+        street=2, # Flop
+        
+        # Range/Constraints
+        bet_range=SimpleNamespace(lower_bound=2.0, upper_bound=100.0),
+        bet_to_match=5.0,
+        minimum_raise=10.0,
+        
+        # Actions (Mocking the can_ methods)
+        actions=SimpleNamespace(
+            can_check=lambda: True,
+            can_fold=lambda: True,
+            can_bet=lambda: True,
+            can_call=lambda: True
+        ),
+        
+        # Others (Empty for now to match your 12-dim input)
+        others=[]
+    )
+
+class FakeEnv:
+
+    def clone(self):
+        return FakeEnv()
+
+    def step(self, action):
+        obs = dummy_obs()
+        reward = torch.tensor(0.0)
+        done = False
+        return obs, reward, done, {}
+
+def test_planner():
+
+    env = FakeEnv()
+
+    model = PokerNet()
+    model.initialize_internal_state()
+
+    planner = LookaheadPlanner(model, env)
+
+    obs = dummy_obs()
+
+    action = planner.choose_action(obs)
+
+    print("chosen action:", action)
+
+'''
+expected output:
+chosen action: call
+'''
+
+
+def test_mcts():
+
+    env = FakeEnv()
+
+    model = PokerNet()
+    model.initialize_internal_state()
+
+    planner = MCTSPlanner(model, env, simulations=10)
+
+    obs = dummy_obs()
+
+    action = planner.run(obs)
+
+    print("MCTS action:", action)
+
+'''
+Expected output:
+
+MCTS action: call
+'''
