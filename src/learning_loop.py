@@ -6,39 +6,57 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from config import *
+from pokerenv import OpponentPool
 
-class LearningLoop():
+class LearningLoop:
     def __init__(self):
         self.optimizer = optim.Adam(
             list(PN.parameters()),
             lr=LEARNING_RATE
         )
+
+        self.opponent_pool = OpponentPool(
+            pool_dir=OPPONENT_POOL_DIR,
+            max_size=MAX_POOL_SIZE,
+            keep_latest=KEEP_LATEST_POOL
+        )
+
     def start_learning(self):
         for epoch in range(EPOCHS):
             batch_trajectories = []
             batch_rewards = []
+
             for _ in range(BATCH_SIZE):
-                opponent_state = self.opponent_pool.sample_snapshot()
-                episode = TrainingEpisode(HANDS_PER_EPISODE, opponent_state=opponent_state)
-                reward = episode.play()
+                # Assumes TrainingEpisode can accept opponent_state
+                game = Game(HANDS_PER_GAME)
+                reward = game.play()
                 batch_rewards.append(reward)
-                batch_trajectories.append(episode.trajectory)
+                batch_trajectories.append(game.trajectory)
 
-            reward=self.compute_reward(batch_trajectories, batch_rewards)
-            result=self.gradient_decent(reward)
-            if epoch % 1000 == 0: 
-                self.save_latest_checkpoint(result,epoch)
+            reward = self.compute_reward(batch_trajectories, batch_rewards)
+            self.gradient_decent(reward)
 
+            if epoch % SAVE_INTERVAL == 0:
+                self.save_latest_checkpoint(epoch)
 
-    def compute_reward():
-        pass
+            if epoch % POOL_SAVE_INTERVAL == 0:
+                self.opponent_pool.add_snapshot(PN, epoch)
+
+    def compute_reward(self, batch_trajectories, batch_rewards):
+        """
+        Replace this with your real reward logic.
+        """
+        return batch_rewards
 
     def gradient_decent(self, reward):
+        """
+        Replace this with your real gradient descent logic.
+        """
         pass
 
-    def save_latest_checkpoint(self,result, epoch, path="latest_checkpoint.pt"):
+    def save_latest_checkpoint(self, epoch, path=CHECKPOINT_PATH):
         torch.save({
             "epoch": epoch,
-            "model_state_dict": result.state_dict(),
+            "model_state_dict": PN.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
         }, path)
