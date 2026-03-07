@@ -17,7 +17,7 @@ class LearningLoop():
         for epoch in range(EPOCHS):
             batch_trajectories = []
             batch_rewards = []
-            for x in range(BATCH_SIZE):
+            for _ in range(BATCH_SIZE):
                 episode=TrainingEpisode(HANDS_PER_EPISODE)
                 reward = episode.play()
                 batch_rewards.append(reward)
@@ -31,6 +31,10 @@ class LearningLoop():
 
     def compute_reward():
         pass
+
+    def gradient_decent(self, reward):
+        pass
+    
 
     def save_to_file(result,epoch):
         torch.save(result, f"SUPER_AWESOME_POKER_NEURAL_NETWORK_EPOCH_NUMBER:{epoch}")
