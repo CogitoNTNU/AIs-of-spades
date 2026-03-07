@@ -7,14 +7,13 @@ import pokerenv.obs_indices as indices
 
 MAIN_CHARACTER_NAME = "UGO"
 
-
 class Game:
     def __init__(self, weight_manager: WeightManager, current_model, ):
         self.weight_manager = weight_manager
         self.current_model = current_model
 
         self.trajectory = []
-        self.reset()
+        self.reward = 0
 
     def reset(self):
         active_opponents = rn.randint(1, 5)
@@ -40,7 +39,7 @@ class Game:
         invalid_action_penalty = 0
         self.table = Table(
             active_opponents + 1,
-            player_names=player_names,
+            players=self.agents,
             stack_low=low_stack_bbs,
             stack_high=high_stack_bbs,
             hand_history_location=hand_history_location,
