@@ -4,6 +4,8 @@ import torch.nn as nn
 from src.pokerenv.observation import Observation
 from types import SimpleNamespace
 
+ACTIONS = ["fold", "call", "raise"]
+
 class CardsCNN(nn.Module):
     """
     CNN for processing card information.
@@ -206,7 +208,7 @@ class LookaheadPlanner:
 
         probs = torch.softmax(logits, dim=-1)
 
-        actions = ["fold", "call", "raise"]
+        actions = ACTIONS
 
         best_action = None
         best_value = -1e9
@@ -310,7 +312,7 @@ class MCTSPlanner:
         logits, _, _, _ = self.model(node.observation)
         probs = torch.softmax(logits, dim=-1)[0]
 
-        actions = ["fold", "call", "raise"]
+        actions = ACTIONS
         node.is_expanded = True
 
         for i, action in enumerate(actions):
@@ -550,9 +552,30 @@ class PokerNet(nn.Module):
         self._game_state = torch.tanh(self.game_state_head(x))
 
         return action_logits, bet_mean, bet_variance, value
+
+class PokerAgent:
+    def __init__(self, model, env, mode: Literal["simple", "lookahead", "mcts"] = "simple"):
+        self.model = model
+        self.env = env
+        self.mode = mode
+        
+        # Initialize the specific planner based on the flag
+        if mode == "lookahead":
+            self.planner = LookaheadPlanner(model, env)
+        elif mode == "mcts":
+            self.planner = MCTSPlanner(model, env)
+        else:
+            self.planner = None # Simple mode just uses raw model logits
+
+    def act(self, observation):
+        if self.mode == "simple":
+            logits, _, _, _ = self.model(observation)
+            actions = ACTIONS
+            return actions[logits.argmax().item()]
+        else:
+            return self.planner.run(observation) if self.mode == "mcts" else self.planner.choose_action(observation)
+        
     
-
-
 # ================ TESTING ================
 
 def test_pokernet_forward():
@@ -652,44 +675,9 @@ class FakeEnv:
         done = False
         return obs, reward, done, {}
 
-def test_planner():
-
-    env = FakeEnv()
-
+def test_agent(mode="mcts"):
     model = PokerNet()
     model.initialize_internal_state()
-
-    planner = LookaheadPlanner(model, env)
-
-    obs = dummy_obs()
-
-    action = planner.choose_action(obs)
-
-    print("chosen action:", action)
-
-'''
-expected output:
-chosen action: call
-'''
-
-
-def test_mcts():
-
     env = FakeEnv()
-
-    model = PokerNet()
-    model.initialize_internal_state()
-
-    planner = MCTSPlanner(model, env, simulations=10)
-
-    obs = dummy_obs()
-
-    action = planner.run(obs)
-
-    print("MCTS action:", action)
-
-'''
-Expected output:
-
-MCTS action: call
-'''
+    agent = PokerAgent(model, env, mode=mode)
+    print(f"Action ({mode}):", agent.act(dummy_obs()))
