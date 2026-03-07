@@ -270,6 +270,7 @@ class PokerNet(nn.Module):
             state_mode (Literal["simple", "branched"]): Mode for state fusion.
         """
         super().__init__()
+        self.value_head = nn.Linear(trunk_hidden_dim, 1)
 
         if state_mode == "simple":
             state_nn = StateFusionNN
@@ -418,7 +419,8 @@ class PokerNet(nn.Module):
         # fusion
         x = torch.cat([fa, fb, fs], dim=1)
         x = self.trunk(x)
-
+        value = self.value_head(x)
+        
         action_logits = self.policy_head(x)
 
         bet_mean = self.bet_mean_head(x)
@@ -429,4 +431,4 @@ class PokerNet(nn.Module):
         self._hand_state = torch.tanh(self.hand_state_head(x))
         self._game_state = torch.tanh(self.game_state_head(x))
 
-        return action_logits, bet_mean, bet_variance
+        return action_logits, bet_mean, bet_variance, value
