@@ -2,7 +2,7 @@ weight_manager:
   model_class: "PokerNet"
   max_models: 100
   keep_latest: 20
-  sampling_mode: "linear"   # "uniform" or "linear"
+  sampling_mode: "linear"   # "uniform" or "linear" or "exponential"
 
 learning_loop:
   learning_rate: 1e-3
@@ -20,5 +20,6 @@ DEVICE: "cpu"
 # todo:
 # - implement compute rewards and gradient descent in learning loop
 # - check inheritance and compatibility of player and player_agent
+# - remove PlayerAction.CHECK from everywhere (expecially table.py)
 # - general cleanup and file organization
 # - testing, testing, testing!

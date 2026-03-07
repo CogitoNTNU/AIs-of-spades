@@ -1,3 +1,4 @@
+import os
 from pokerenv.learning_loop import LearningLoop
 from pokerenv.weight_manager import WeightManager
 from nn.nn import PokerNet
@@ -8,7 +9,7 @@ model_classes = {
     "PokerNet": PokerNet,
     # ...
 }
-with open("config.yaml", "r") as f:
+with open(os.path.join(os.path.dirname(__file__), "config.yaml"), "r") as f:
     config = yaml.safe_load(f)
 config["weight_manager"]["model_class"] = model_classes[config["weight_manager"]["model_class"]]
 

@@ -41,12 +41,12 @@ class Player:
         self.state = PlayerState.FOLDED
         self.history.append({'action': PlayerAction.FOLD, 'value': 0})
 
-    def check(self):
+    def _check(self):
         self.has_acted = True
         self.acted_this_street = True
         self.history.append({'action': PlayerAction.CHECK, 'value': 0})
 
-    def call(self, amount):
+    def _call(self, amount):
         self.has_acted = True
         self.acted_this_street = True
         amount = amount - self.bet_this_street
@@ -64,6 +64,13 @@ class Player:
             self.money_in_pot += amount
             self.history.append({'action': PlayerAction.CALL, 'value': amount})
             return amount
+        
+    def check_or_call(self, amount):
+        if amount > self.bet_this_street:
+            return self._call(amount)
+        else:
+            self._check()
+            return 0
 
     def bet(self, amount):
         self.has_acted = True

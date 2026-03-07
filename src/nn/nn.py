@@ -1,7 +1,7 @@
 from typing import Literal, Tuple, Union
 import torch
 import torch.nn as nn
-from src.pokerenv.observation import Observation
+from pokerenv.observation import Observation
 
 class CardsCNN(nn.Module):
     """
@@ -383,6 +383,9 @@ class PokerNet(nn.Module):
         self,
         observation: Observation,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        
+        print(self._hand_state)
+        print(self._game_state)
 
         if self._hand_state is None or self._game_state is None:
             raise RuntimeError("Internal state not initialized.")

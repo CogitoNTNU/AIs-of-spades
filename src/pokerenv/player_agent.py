@@ -10,6 +10,7 @@ class PlayerAgent(Player):
     def __init__(self, identifier, name, penalty, nn: PokerNet):
         super().__init__(identifier, name, penalty)
         self.nn = nn
+        nn.initialize_internal_state()
 
     def get_action(self, observation) -> Action:
         """
