@@ -277,7 +277,7 @@ class PokerNet(nn.Module):
     def __init__(
         self,
         # BetsNN params
-        bets_in_dim: int = 128,
+        bets_in_dim: int = 12,
         bets_hidden_dim: int = 64,
         bets_out_dim: int = 32,
         # CardsCNN params
@@ -449,6 +449,10 @@ class PokerNet(nn.Module):
         # extract cards and bets from the observations
         cards, bets = self.preprocess_observation(observation)
 
+        # branch dimension [B, ...] ; B=1
+        cards = cards.unsqueeze(0)  # Becomes [1, 4, 4, 13]
+        bets = bets.unsqueeze(0)   # Becomes [1, 12]
+
         # branches
         fa = self.cards_branch(cards)
         fb = self.bets_branch(bets)
@@ -500,10 +504,10 @@ def test_pokernet_forward():
     obs.minimum_raise = 4
 
     obs.actions = type("x", (), {
-        "can_check": lambda:1,
-        "can_fold": lambda:1,
-        "can_bet": lambda:1,
-        "can_call": lambda:1
+        "can_check": lambda _: 1,
+        "can_fold": lambda _: 1,
+        "can_bet": lambda _: 1,
+        "can_call": lambda _: 1
     })()
 
     obs.others = []
