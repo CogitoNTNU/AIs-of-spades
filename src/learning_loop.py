@@ -13,12 +13,13 @@ class LearningLoop():
             list(PN.parameters()),
             lr=LEARNING_RATE
         )
-    def start_learning():
+    def start_learning(self):
         for epoch in range(EPOCHS):
             batch_trajectories = []
             batch_rewards = []
             for _ in range(BATCH_SIZE):
-                episode=TrainingEpisode(HANDS_PER_EPISODE)
+                opponent_state = self.opponent_pool.sample_snapshot()
+                episode = TrainingEpisode(HANDS_PER_EPISODE, opponent_state=opponent_state)
                 reward = episode.play()
                 batch_rewards.append(reward)
                 batch_trajectories.append(episode.trajectory)
@@ -26,7 +27,7 @@ class LearningLoop():
             reward=self.compute_reward(batch_trajectories, batch_rewards)
             result=self.gradient_decent(reward)
             if epoch % 1000 == 0: 
-                self.save_to_file(result,epoch)
+                self.save_latest_checkpoint(result,epoch)
 
 
     def compute_reward():
@@ -34,7 +35,10 @@ class LearningLoop():
 
     def gradient_decent(self, reward):
         pass
-    
 
-    def save_to_file(result,epoch):
-        torch.save(result, f"SUPER_AWESOME_POKER_NEURAL_NETWORK_EPOCH_NUMBER:{epoch}")
+    def save_latest_checkpoint(self,result, epoch, path="latest_checkpoint.pt"):
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": result.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+        }, path)
