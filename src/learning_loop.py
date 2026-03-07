@@ -1,78 +1,59 @@
-import numpy as np
-import pokerenv.obs_indices as indices
-from pokerenv.table import Table
-from pokerenv.common import PlayerAction, Action, action_list
+from src.weight_manager import WeightManager
+from game_loop import Game
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from config import *
+from pokerenv import OpponentPool
 
+class LearningLoop:
+    def __init__(self, weight_manager: WeightManager, config):
+        self.weight_manager = weight_manager
+        self.config = config["learning_loop"]
 
+        # initialize the current model (PN) with random weights
+        self.current_model = config["weight_manager"]["model_class"]()
 
-def reset_env():
-    PN.reset_trajectories() #We added
-    batch_rewards = [] #We added (will not work)!!!
-    active_players = 6
-    agents = [ExampleRandomAgent() for _ in range(6)]
-    player_names = {0: 'TrackedAgent1', 1: 'Agent2'} # Rest are defaulted to player3, player4...
-    # Should we only log the 0th players (here TrackedAgent1) private cards to hand history files
-    
-
-for epoch in range(EPOCHS):
-    batch_trajectories = []
-    batch_rewards = []
-    for  ex in range(BATCH_SIZE):
-        reset_env()
-        done = False
-
-class LearningLoop():
-    def __init__(self):
         self.optimizer = optim.Adam(
-            list(PN.parameters()),
-            lr=LEARNING_RATE
+            list(self.current_model.parameters()),
+            lr=config.get("learning_rate", 1e-4),
         )
-    
-    def compute_reward(self, final_stack, initial_stack=50):
-        return np.log(final_stack/initial_stack)
 
-if __name__ == "__main__":
-    learning_loop = LearningLoop()
+    def start_learning(self):
 
+        for epoch in range(self.config.get("epochs", 1000)):
+            batch_trajectories = []
+            batch_rewards = []
 
+            for _ in range(self.config.get("games_per_epoch", 10)):
+                game = Game(self.weight_manager, self.current_model)
+                reward = game.play(self.config.get("hands_per_game", 100))
+                batch_rewards.append(reward)
+                batch_trajectories.append(game.trajectory)
 
+            reward = self.compute_reward(batch_trajectories, batch_rewards)
+            self.gradient_decent(reward)
 
+            if epoch % self.config.get("save_interval", 20) == 0:
+                self.save_latest_checkpoint(epoch)
 
+            if epoch % self.config.get("save_every", 20) == 0 or epoch == self.config.get("epochs", 1000) - 1:
+                self.weight_manager.save(self.current_model, epoch)
 
+    def compute_reward(self, batch_trajectories, batch_rewards):
+        """
+        Replace this with your real reward logic.
+        """
+        return batch_rewards
 
+    def gradient_decent(self, reward):
+        """
+        Replace this with your real gradient descent logic.
+        """
+        pass
 
-
-
-
-
-iteration = 1
-while True:
-    if iteration % 50 == 0:
-        table.hand_history_enabled = True
-    active_players = np.random.randint(2, 7)
-    table.n_players = active_players
-    obs = table.reset()
-    for agent in agents:
-        agent.reset()
-    acting_player = int(obs[indices.ACTING_PLAYER])
-    while True:
-        action = agents[acting_player].get_action(obs)
-        obs, reward, done, _ = table.step(action)
-        if  done:
-            # Distribute final rewards
-            for i in range(active_players):
-                agents[i].rewards.append(reward[i])
-            break
-        else:
-            # This step can be skipped unless invalid action penalty is enabled, 
-            # since we only get a reward when the pot is distributed, and the done flag is set
-            agents[acting_player].rewards.append(reward[acting_player])
-            acting_player = int(obs[indices.ACTING_PLAYER])
-    iteration += 1
-    table.hand_history_enabled = False
-
-
+    def save_latest_checkpoint(self, epoch):
+        torch.save({
+            "epoch": epoch,
+            "model_state_dict": self.current_model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+        }, self.config.get("latest_checkpoint_path", "latest_checkpoint.pt"))

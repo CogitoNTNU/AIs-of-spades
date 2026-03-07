@@ -33,7 +33,7 @@ class PlayerAgent(Player):
             + observation.bet_range.lower_bound
         )
 
-        return Actions(d, action_logits[d], bet_value, bet_prob)
+        return Action(d, action_logits[d], bet_value, bet_prob)
 
     def reset(self):
         pass

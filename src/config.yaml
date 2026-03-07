@@ -1,0 +1,24 @@
+weight_manager:
+  model_class: "PokerNet"
+  max_models: 100
+  keep_latest: 20
+  sampling_mode: "linear"   # "uniform" or "linear"
+
+learning_loop:
+  learning_rate: 1e-3
+  epochs: 10000
+  games_per_epoch: 32   # batch size for training
+  hands_per_game: 100
+  save_interval: 100    # save a checkpoint in case of crash
+  save_every: 20        # save a model every N epochs
+  checkpoint_dir: "checkpoint"
+
+DEVICE: "cpu"
+
+
+
+# todo:
+# - implement compute rewards and gradient descent in learning loop
+# - check inheritance and compatibility of player and player_agent
+# - general cleanup and file organization
+# - testing, testing, testing!

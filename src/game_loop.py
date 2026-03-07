@@ -5,13 +5,13 @@ from pokerenv.observation import Observation
 from weight_manager import WeightManager
 import pokerenv.obs_indices as indices
 
-
 MAIN_CHARACTER_NAME = "UGO"
 
+class Game:
+    def __init__(self, weight_manager: WeightManager, current_model, ):
+        self.weight_manager = weight_manager
+        self.current_model = current_model
 
-class TrainingEpisode:
-    def __init__(self):
-        self.reset()
         self.trajectory = []
         self.reward = 0
 
@@ -24,12 +24,12 @@ class TrainingEpisode:
                 player_names[player] = "player_%d" % (player + 1)
 
         self.agents = [
-            PlayerAgent(WeightManager.get_updated_weights(), 0, player_names[0])
+            PlayerAgent(self.current_model, 0, player_names[0])
         ]
 
         for n in range(1, active_opponents + 1):
             self.agents.append(
-                PlayerAgent(WeightManager.get_opponent_weights(), n, player_names[n])
+                PlayerAgent(self.weight_manager.sample_opponent(), n, player_names[n])
             )
 
         # Bounds for randomizing player stack sizes in reset()
