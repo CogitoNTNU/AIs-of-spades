@@ -2,6 +2,7 @@ from typing import Literal, Tuple, Union
 import torch
 import torch.nn as nn
 from src.pokerenv.observation import Observation
+from types import SimpleNamespace
 
 class CardsCNN(nn.Module):
     """
@@ -193,7 +194,140 @@ class BetsNN(nn.Module):
         """
         return self.net(bets)
 
+class LookaheadPlanner:
 
+    def __init__(self, model, env):
+        self.model = model
+        self.env = env
+
+    def choose_action(self, observation):
+
+        logits, bet_mean, bet_var, value = self.model(observation)
+
+        probs = torch.softmax(logits, dim=-1)
+
+        actions = ["fold", "call", "raise"]
+
+        best_action = None
+        best_value = -1e9
+
+        for i, action in enumerate(actions):
+
+            if probs[0, i].item() < 1e-6:
+                continue
+
+            # clone environment
+            env_copy = self.env.clone()
+
+            next_obs, reward, done, _ = env_copy.step(action)
+
+            if done:
+                v = reward
+            else:
+                with torch.no_grad():
+                    _, _, _, v_tensor = self.model(next_obs)
+                    v = v_tensor.item()
+
+            if v > best_value:
+                best_value = v
+                best_action = action
+
+        return best_action
+
+class MCTSNode:
+
+    def __init__(self, observation, env, prior=0.0):
+        self.observation = observation
+        self.env = env
+        self.prior = prior
+
+        self.value_sum = 0.0
+        self.visit_count = 0
+
+        self.children = {}
+        self.is_expanded = False
+
+    def value(self):
+        return 0 if self.visit_count == 0 else self.value_sum / self.visit_count
+
+
+def ucb_score(parent, child, c_puct=1.5):
+    exploration = c_puct * child.prior * (
+        (parent.visit_count ** 0.5) / (1 + child.visit_count)
+    )
+    return child.value() + exploration
+
+
+class MCTSPlanner:
+
+    def __init__(self, model, env, simulations=25):
+        self.model = model
+        self.env = env
+        self.simulations = simulations
+
+    def run(self, observation):
+
+        root = MCTSNode(observation, self.env.clone())
+        self.expand(root)
+
+        for _ in range(self.simulations):
+
+            node = root
+            path = [node]
+
+            # Selection
+            while node.is_expanded and node.children:
+                node = self.select_child(node)
+                path.append(node)
+
+            # Evaluation
+            value, done = self.evaluate(node)
+
+            # Expansion
+            if not done:
+                self.expand(node)
+
+            # Backpropagation
+            self.backpropagate(path, value)
+
+        return self.select_action(root)
+
+    def select_child(self, node):
+        return max(node.children.values(),
+                   key=lambda child: ucb_score(node, child))
+
+    def evaluate(self, node):
+        _, _, _, value = self.model(node.observation)
+        return value.item(), False
+
+    def backpropagate(self, path, value):
+        for node in reversed(path):
+            node.visit_count += 1
+            node.value_sum += value
+
+    def expand(self, node):
+
+        logits, _, _, _ = self.model(node.observation)
+        probs = torch.softmax(logits, dim=-1)[0]
+
+        actions = ["fold", "call", "raise"]
+        node.is_expanded = True
+
+        for i, action in enumerate(actions):
+
+            env_copy = node.env.clone()
+            next_obs, _, _, _ = env_copy.step(action)
+
+            node.children[action] = MCTSNode(
+                next_obs,
+                env_copy,
+                prior=probs[i].item()
+            )
+
+    def select_action(self, root):
+        return max(root.children.items(),
+                   key=lambda x: x[1].visit_count)[0]
+     
 class PokerNet(nn.Module):
     """
     Integrated Poker network that combines cards, bets, and game state.
@@ -219,7 +353,7 @@ class PokerNet(nn.Module):
     def __init__(
         self,
         # BetsNN params
-        bets_in_dim: int = 128,
+        bets_in_dim: int = 12,
         bets_hidden_dim: int = 64,
         bets_out_dim: int = 32,
         # CardsCNN params
@@ -250,6 +384,7 @@ class PokerNet(nn.Module):
             state_mode (Literal["simple", "branched"]): Mode for state fusion.
         """
         super().__init__()
+        self.value_head = nn.Linear(trunk_hidden_dim, 1)
 
         if state_mode == "simple":
             state_nn = StateFusionNN
@@ -390,6 +525,10 @@ class PokerNet(nn.Module):
         # extract cards and bets from the observations
         cards, bets = self.preprocess_observation(observation)
 
+        # branch dimension [B, ...] ; B=1
+        cards = cards.unsqueeze(0)  # Becomes [1, 4, 4, 13]
+        bets = bets.unsqueeze(0)   # Becomes [1, 12]
+
         # branches
         fa = self.cards_branch(cards)
         fb = self.bets_branch(bets)
@@ -398,7 +537,8 @@ class PokerNet(nn.Module):
         # fusion
         x = torch.cat([fa, fb, fs], dim=1)
         x = self.trunk(x)
-
+        value = self.value_head(x)
+        
         action_logits = self.policy_head(x)
 
         bet_mean = self.bet_mean_head(x)
@@ -409,4 +549,147 @@ class PokerNet(nn.Module):
         self._hand_state = torch.tanh(self.hand_state_head(x))
         self._game_state = torch.tanh(self.game_state_head(x))
 
-        return action_logits, bet_mean, bet_variance
+        return action_logits, bet_mean, bet_variance, value
+    
+
+
+# ================ TESTING ================
+
+def test_pokernet_forward():
+
+    model = PokerNet()
+
+    model.initialize_internal_state()
+
+    class DummyObs:
+        pass
+
+    obs = DummyObs()
+
+    obs.hand_cards = type("x", (), {"cards": []})()
+    obs.table_cards = type("x", (), {"cards": []})()
+
+    obs.player_stack = 100
+    obs.player_money_in_pot = 5
+    obs.bet_this_street = 2
+    obs.street = 1
+
+    obs.bet_range = type("x", (), {"lower_bound":0,"upper_bound":100})()
+
+    obs.bet_to_match = 2
+    obs.minimum_raise = 4
+
+    obs.actions = type("x", (), {
+        "can_check": lambda _: 1,
+        "can_fold": lambda _: 1,
+        "can_bet": lambda _: 1,
+        "can_call": lambda _: 1
+    })()
+
+    obs.others = []
+
+    logits, mean, var, value = model(obs)
+
+    print("logits:", logits.shape)
+    print("bet_mean:", mean.shape)
+    print("variance:", var.shape)
+    print("value:", value.shape)
+
+'''
+Expected output:
+
+logits: [1,3]
+bet_mean: [1,1]
+variance: [1,1]
+value: [1,1]
+
+'''
+
+# =============== Planner test ===============
+
+
+def dummy_obs():
+    """
+    Creates a nested dummy observation object that matches 
+    the requirements of PokerNet.preprocess_observation.
+    """
+    return SimpleNamespace(
+        # Cards (Empty lists for speed, but valid for the loop)
+        hand_cards=SimpleNamespace(cards=[]),
+        table_cards=SimpleNamespace(cards=[]),
+        
+        # Numeric State
+        player_stack=100.0,
+        player_money_in_pot=10.0,
+        bet_this_street=5.0,
+        street=2, # Flop
+        
+        # Range/Constraints
+        bet_range=SimpleNamespace(lower_bound=2.0, upper_bound=100.0),
+        bet_to_match=5.0,
+        minimum_raise=10.0,
+        
+        # Actions (Mocking the can_ methods)
+        actions=SimpleNamespace(
+            can_check=lambda: True,
+            can_fold=lambda: True,
+            can_bet=lambda: True,
+            can_call=lambda: True
+        ),
+        
+        # Others (Empty for now to match your 12-dim input)
+        others=[]
+    )
+
+class FakeEnv:
+
+    def clone(self):
+        return FakeEnv()
+
+    def step(self, action):
+        obs = dummy_obs()
+        reward = torch.tensor(0.0)
+        done = False
+        return obs, reward, done, {}
+
+def test_planner():
+
+    env = FakeEnv()
+
+    model = PokerNet()
+    model.initialize_internal_state()
+
+    planner = LookaheadPlanner(model, env)
+
+    obs = dummy_obs()
+
+    action = planner.choose_action(obs)
+
+    print("chosen action:", action)
+
+'''
+expected output:
+chosen action: call
+'''
+
+
+def test_mcts():
+
+    env = FakeEnv()
+
+    model = PokerNet()
+    model.initialize_internal_state()
+
+    planner = MCTSPlanner(model, env, simulations=10)
+
+    obs = dummy_obs()
+
+    action = planner.run(obs)
+
+    print("MCTS action:", action)
+
+'''
+Expected output:
+
+MCTS action: call
+'''
