@@ -1,5 +1,6 @@
 weight_manager:
   model_class: "PokerNet"
+  models_dir: "models"
   max_models: 100
   keep_latest: 20
   sampling_mode: "linear"   # "uniform" or "linear" or "exponential"
@@ -12,14 +13,3 @@ learning_loop:
   save_interval: 100    # save a checkpoint in case of crash
   save_every: 20        # save a model every N epochs
   checkpoint_dir: "checkpoint"
-
-DEVICE: "cpu"
-
-
-
-# todo:
-# - implement compute rewards and gradient descent in learning loop
-# - check inheritance and compatibility of player and player_agent
-# - remove PlayerAction.CHECK from everywhere (expecially table.py)
-# - general cleanup and file organization
-# - testing, testing, testing!
