@@ -470,3 +470,59 @@ class PokerNet(nn.Module):
         self._game_state = torch.tanh(self.game_state_head(x))
 
         return action_logits, bet_mean, bet_variance, value
+    
+
+
+    # ================ TESTING ================
+
+def test_pokernet_forward():
+
+    model = PokerNet()
+
+    model.initialize_internal_state()
+
+    class DummyObs:
+        pass
+
+    obs = DummyObs()
+
+    obs.hand_cards = type("x", (), {"cards": []})()
+    obs.table_cards = type("x", (), {"cards": []})()
+
+    obs.player_stack = 100
+    obs.player_money_in_pot = 5
+    obs.bet_this_street = 2
+    obs.street = 1
+
+    obs.bet_range = type("x", (), {"lower_bound":0,"upper_bound":100})()
+
+    obs.bet_to_match = 2
+    obs.minimum_raise = 4
+
+    obs.actions = type("x", (), {
+        "can_check": lambda:1,
+        "can_fold": lambda:1,
+        "can_bet": lambda:1,
+        "can_call": lambda:1
+    })()
+
+    obs.others = []
+
+    logits, mean, var, value = model(obs)
+
+    print("logits:", logits.shape)
+    print("bet_mean:", mean.shape)
+    print("variance:", var.shape)
+    print("value:", value.shape)
+
+'''
+Expected output:
+
+logits: [1,3]
+bet_mean: [1,1]
+variance: [1,1]
+value: [1,1]
+
+'''
+
+test_pokernet_forward()
