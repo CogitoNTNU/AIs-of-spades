@@ -213,7 +213,45 @@ class BetsNN(nn.Module):
         """
         return self.net(bets)
 
+class LookaheadPlanner:
 
+    def __init__(self, model, env):
+        self.model = model
+        self.env = env
+
+    def choose_action(self, observation):
+
+        logits, bet_mean, bet_var, value = self.model(observation)
+
+        probs = torch.softmax(logits, dim=-1)
+
+        actions = ["fold", "call", "raise"]
+
+        best_action = None
+        best_value = -1e9
+
+        for i, action in enumerate(actions):
+
+            if probs[i] < 1e-6:
+                continue
+
+            # clone environment
+            env_copy = self.env.clone()
+
+            next_obs, reward, done, _ = env_copy.step(action)
+
+            if done:
+                v = reward
+            else:
+                with torch.no_grad():
+                    _, _, _, v = self.model(next_obs)
+
+            if v > best_value:
+                best_value = v
+                best_action = action
+
+        return best_action
+    
 class PokerNet(nn.Module):
     """
     Integrated Poker network that combines cards, bets, and game state.
