@@ -7,7 +7,7 @@ class WeightManager:
 
     def __init__(self, config):
         self.model_class = config.get("model_class")
-        self.checkpoint_dir = config.get("checkpoint_dir", "checkpoints")
+        self.models_dir = config.get("models_dir")
         self.max_models = config.get("max_models", 50)
         self.keep_latest = config.get("keep_latest", 20)
         self.sampling_mode = config.get("sampling_mode", "uniform")
@@ -15,11 +15,11 @@ class WeightManager:
         self.snapshots = []
         self.cache = {}
 
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        os.makedirs(self.models_dir, exist_ok=True)
 
     def save(self, model, epoch: int):
 
-        path = os.path.join(self.checkpoint_dir, f"epoch_{epoch}.pt")
+        path = os.path.join(self.models_dir, f"epoch_{epoch}.pt")
         state_dict = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         torch.save(state_dict, path)
         print(f"Saved checkpoint: {path}")
