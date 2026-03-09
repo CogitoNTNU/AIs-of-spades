@@ -1,72 +1,93 @@
 import random as rn
+
 from pokerenv.player_agent import PlayerAgent
 from pokerenv.table import Table
 from pokerenv.observation import Observation
 from pokerenv.weight_manager import WeightManager
-import pokerenv.obs_indices as indices
 
 MAIN_CHARACTER_NAME = "UGO"
+
 
 class Game:
     def __init__(self, weight_manager: WeightManager, current_model):
         self.weight_manager = weight_manager
         self.current_model = current_model
+        self.table = None
+        self.agents = []
 
+        # trajectory: list of (log_p_discrete, log_p_continuous) — both PyTorch tensors
+        # Only steps where the main character acted are stored.
         self.trajectory = []
-        self.reward = 0
+        self.reward = 0.0
 
     def reset(self):
+        self.trajectory = []
+        self.reward = 0.0
+
         active_opponents = rn.randint(1, 5)
-        player_names = {0: MAIN_CHARACTER_NAME}
+        player_names = {i: "player_%d" % (i + 1) for i in range(6)}
+        player_names[0] = MAIN_CHARACTER_NAME
 
-        for player in range(6):
-            if player not in player_names.keys():
-                player_names[player] = "player_%d" % (player + 1)
-
-        self.agents = [
-            PlayerAgent(0, player_names[0], 0, self.current_model)
-        ]
-
+        self.agents = [PlayerAgent(0, MAIN_CHARACTER_NAME, 0, self.current_model)]
         for n in range(1, active_opponents + 1):
             self.agents.append(
-                PlayerAgent(n, player_names[n], 0, self.weight_manager.sample_opponent())
+                PlayerAgent(
+                    n, player_names[n], 0, self.weight_manager.sample_opponent()
+                )
             )
 
-        # Bounds for randomizing player stack sizes in reset()
-        low_stack_bbs = 50
-        high_stack_bbs = 200
-        hand_history_location = "hands/"
-        invalid_action_penalty = 0
         self.table = Table(
             active_opponents + 1,
             players=self.agents,
-            stack_low=low_stack_bbs,
-            stack_high=high_stack_bbs,
-            hand_history_location=hand_history_location,
-            invalid_action_penalty=invalid_action_penalty,
+            stack_low=50,
+            stack_high=200,
+            hand_history_location="hands/",
+            invalid_action_penalty=0,
         )
-        self.table.seed(1)
+        self.table.seed(None)
 
-    def play(self, total_iterations):
+    def play(self, total_hands: int):
+        """
+        Plays `total_hands` hands and returns (total_reward, trajectory).
+
+        trajectory is a list of (log_p_discrete, log_p_continuous) tensors
+        for every step the main character took. These tensors are still
+        attached to the computation graph of current_model, so that
+        loss.backward() works correctly in LearningLoop.
+        """
         self.reset()
 
-        iteration = 1
-        while iteration < total_iterations:
-            obs = Observation(self.table.reset())
-            # acting_player = self.agents[int(obs.player_identifier)]
-            acting_player = int(obs.player_identifier)
+        for _ in range(total_hands):
+            obs_array = self.table.reset()
+            obs = Observation(obs_array)
+
             while True:
-                action = self.agents[acting_player].get_action(obs)
-                obs, reward, done, _ = self.table.step(action)
-                self.trajectory.append(
-                    (action.action_probability, action.bet_probability)
-                )
+                acting_player_i = int(obs.player_identifier)
+
+                if acting_player_i >= len(self.agents):
+                    raise Exception(
+                        "player_identifier %d is out of range (agents: %d)"
+                        % (acting_player_i, len(self.agents))
+                    )
+
+                action = self.agents[acting_player_i].get_action(obs)
+
+                # Store log_probs ONLY for the main character, as tensors
+                if acting_player_i == 0:
+                    self.trajectory.append(
+                        (action.log_p_discrete, action.log_p_continuous)
+                    )
+
+                obs_array, rewards, done, _ = self.table.step(action)
+
                 if done:
                     main_character = self.table.get_player_by_name(MAIN_CHARACTER_NAME)
-                    if main_character:
+                    if main_character is not None:
                         reward = main_character.get_reward()
-                        if reward:
+                        if reward is not None:
                             self.reward += reward
                     break
 
-        return self.reward
+                obs = Observation(obs_array)
+
+        return self.reward, self.trajectory

@@ -1,3 +1,4 @@
+# player.py
 from pokerenv.common import PlayerState, PlayerAction
 
 
@@ -39,12 +40,12 @@ class Player:
         self.has_acted = True
         self.acted_this_street = True
         self.state = PlayerState.FOLDED
-        self.history.append({'action': PlayerAction.FOLD, 'value': 0})
+        self.history.append({"action": PlayerAction.FOLD, "value": 0})
 
     def _check(self):
         self.has_acted = True
         self.acted_this_street = True
-        self.history.append({'action': PlayerAction.CHECK, 'value': 0})
+        self.history.append({"action": PlayerAction.CALL, "value": 0})
 
     def _call(self, amount):
         self.has_acted = True
@@ -56,15 +57,15 @@ class Player:
             self.all_in = True
             self.bet_this_street += call_size
             self.money_in_pot += call_size
-            self.history.append({'action': PlayerAction.CALL, 'value': call_size})
+            self.history.append({"action": PlayerAction.CALL, "value": call_size})
             return call_size
         else:
             self.stack -= amount
             self.bet_this_street += amount
             self.money_in_pot += amount
-            self.history.append({'action': PlayerAction.CALL, 'value': amount})
+            self.history.append({"action": PlayerAction.CALL, "value": amount})
             return amount
-        
+
     def check_or_call(self, amount):
         if amount > self.bet_this_street:
             return self._call(amount)
@@ -81,7 +82,7 @@ class Player:
         self.stack -= amount
         self.bet_this_street += amount
         self.money_in_pot += amount
-        self.history.append({'action': PlayerAction.BET, 'value': amount})
+        self.history.append({"action": PlayerAction.BET, "value": amount})
         return amount
 
     def punish_invalid_action(self):
@@ -97,6 +98,7 @@ class Player:
     def reset(self):
         self.state = PlayerState.ACTIVE
         self.has_acted = False
+        self.acted_this_street = False
         self.all_in = False
         self.bet_this_street = 0
         self.money_in_pot = 0
