@@ -22,14 +22,3 @@ class PlayerAction(IntEnum):
 class TablePosition(IntEnum):
     SB = 0
     BB = 1
-
-
-class Action:
-    def __init__(self, action_type, action_prob, bet_amount, bet_prob):
-        self.action_type = action_type
-        self.action_prob = action_prob
-        self.bet_amount = bet_amount
-        self.bet_prob = bet_prob
-
-
-action_list = [PlayerAction.FOLD, PlayerAction.BET, PlayerAction.CALL]
