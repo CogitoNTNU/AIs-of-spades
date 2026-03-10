@@ -1,15 +1,35 @@
 import numpy as np
 import torch
 import torch.optim as optim
+import wandb
+import torch.multiprocessing as mp
 
 from pokerenv.weight_manager import WeightManager
 from pokerenv.game_loop import Game
+
+
+def _run_game(args):
+    """Runs in a separate process — no shared state."""
+    model_class, state_dict, hands_per_game, weight_manager_config = args
+
+    # Rebuild model from weights snapshot
+    model = model_class()
+    model.initialize_internal_state()
+    model.load_state_dict(state_dict)
+    model.eval()  # no grad needed during rollout
+
+    with torch.no_grad():
+        game = Game(weight_manager_config, model)
+        reward, trajectory = game.play(hands_per_game)
+
+    return reward, trajectory
 
 
 class LearningLoop:
     def __init__(self, weight_manager: WeightManager, config: dict):
         self.weight_manager = weight_manager
         self.config = config["learning_loop"]
+        self.num_workers = self.config.get("num_workers", mp.cpu_count())
 
         self.current_model = config["weight_manager"]["model_class"]()
         self.current_model.initialize_internal_state()
@@ -43,27 +63,67 @@ class LearningLoop:
         if resume_from:
             start_epoch = self.load_checkpoint(resume_from)
 
-        for epoch in range(start_epoch, epochs):
-            batch_trajectories = []
-            batch_rewards = []
+        state_dict = {k: v.cpu() for k, v in self.current_model.state_dict().items()}
 
-            for _ in range(games_per_epoch):
-                game = Game(self.weight_manager, self.current_model)
-                reward, trajectory = game.play(hands_per_game)
-                batch_rewards.append(reward)
-                batch_trajectories.append(trajectory)
-
-            loss = self._compute_reinforce_loss(batch_trajectories, batch_rewards)
-            self._gradient_step(loss)
-
-            avg_reward = np.mean(batch_rewards)
-            print(
-                f"Epoch {epoch + 1}/{epochs} | loss: {loss.item():.4f} | avg reward: {avg_reward:.4f}"
+        args = [
+            (
+                self.current_model.__class__,
+                state_dict,
+                hands_per_game,
+                self.weight_manager,  # only used for opponent sampling — read-only
             )
+            for _ in range(games_per_epoch)
+        ]
 
-            if epoch % save_interval == 0 or epoch == epochs - 1:
-                # WeightManager handles saving, pool management, and pruning
-                self.weight_manager.save(self.current_model, self.optimizer, epoch)
+        with mp.Pool(processes=self.num_workers) as pool:
+            for epoch in range(start_epoch, epochs):
+                state_dict = {
+                    k: v.cpu() for k, v in self.current_model.state_dict().items()
+                }
+                args = [
+                    (
+                        self.current_model.__class__,
+                        state_dict,
+                        hands_per_game,
+                        self.weight_manager,
+                    )
+                    for _ in range(games_per_epoch)
+                ]
+
+                results = pool.map(_run_game, args)
+
+                batch_rewards = [r for r, _ in results]
+                batch_trajectories = [t for _, t in results]
+
+                loss = self._compute_reinforce_loss(batch_trajectories, batch_rewards)
+                self._gradient_step(loss)
+
+                avg_reward = np.mean(batch_rewards)
+                wandb.log(
+                    {
+                        "epoch": epoch,
+                        # Core training signal
+                        "train/loss": loss.item() if loss.requires_grad else 0.0,
+                        "train/avg_reward": avg_reward,
+                        # Reward distribution across games (helps spot instability)
+                        "train/reward_std": np.std(batch_rewards),
+                        "train/reward_max": np.max(batch_rewards),
+                        "train/reward_min": np.min(batch_rewards),
+                        # Trajectory length — if it drops, your agent may be folding too early
+                        "train/avg_trajectory_len": np.mean(
+                            [len(t) for t in batch_trajectories]
+                        ),
+                        # Gradient norm — useful to verify clipping is working
+                        "train/grad_norm": self._get_grad_norm(),
+                    }
+                )
+                print(
+                    f"Epoch {epoch + 1}/{epochs} | loss: {loss.item():.4f} | avg reward: {avg_reward:.4f}"
+                )
+
+                if epoch % save_interval == 0 or epoch == epochs - 1:
+                    # WeightManager handles saving, pool management, and pruning
+                    self.weight_manager.save(self.current_model, self.optimizer, epoch)
 
     # ------------------------------------------------------------------
     # REINFORCE
@@ -120,3 +180,11 @@ class LearningLoop:
         # Clip to avoid exploding gradients (common issue with REINFORCE)
         torch.nn.utils.clip_grad_norm_(self.current_model.parameters(), max_norm=1.0)
         self.optimizer.step()
+
+    def _get_grad_norm(self) -> float:
+        """Compute total gradient norm after backward()."""
+        total_norm = 0.0
+        for p in self.current_model.parameters():
+            if p.grad is not None:
+                total_norm += p.grad.data.norm(2).item() ** 2
+        return total_norm**0.5
