@@ -1,4 +1,3 @@
-# learning_loop.py
 import numpy as np
 import torch
 import torch.optim as optim
@@ -20,12 +19,31 @@ class LearningLoop:
             lr=config.get("learning_rate", 1e-4),
         )
 
-    def start_learning(self):
+    def load_checkpoint(self, checkpoint_path: str) -> int:
+        """
+        Restores model and optimizer state from a checkpoint saved by WeightManager.
+        Returns the next epoch to resume from.
+        """
+        checkpoint = torch.load(checkpoint_path)
+        self.current_model.load_state_dict(checkpoint["model_state_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        start_epoch = checkpoint["epoch"] + 1
+        print(
+            f"Checkpoint loaded from '{checkpoint_path}' — resuming from epoch {start_epoch}"
+        )
+        return start_epoch
+
+    def start_learning(self, resume_from: str | None = None):
         epochs = self.config.get("epochs", 1000)
         games_per_epoch = self.config.get("games_per_epoch", 10)
         hands_per_game = self.config.get("hands_per_game", 100)
+        save_interval = self.config.get("save_interval", 20)
 
-        for epoch in range(epochs):
+        start_epoch = 0
+        if resume_from:
+            start_epoch = self.load_checkpoint(resume_from)
+
+        for epoch in range(start_epoch, epochs):
             batch_trajectories = []
             batch_rewards = []
 
@@ -43,9 +61,9 @@ class LearningLoop:
                 f"Epoch {epoch + 1}/{epochs} | loss: {loss.item():.4f} | avg reward: {avg_reward:.4f}"
             )
 
-            if epoch % self.config.get("save_interval", 20) == 0 or epoch == epochs - 1:
-                self._save_checkpoint(epoch)
-                self.weight_manager.save(self.current_model, epoch)
+            if epoch % save_interval == 0 or epoch == epochs - 1:
+                # WeightManager handles saving, pool management, and pruning
+                self.weight_manager.save(self.current_model, self.optimizer, epoch)
 
     # ------------------------------------------------------------------
     # REINFORCE
@@ -61,9 +79,9 @@ class LearningLoop:
             loss += -R_i * (log_p_discrete_t + log_p_continuous_t)
 
         Where:
-            R_i               — scalar reward for episode i
-            log_p_discrete_t  — log π(a_discrete | s_t), tensor from Categorical.log_prob()
-            log_p_continuous_t — log π(bet | s_t),       tensor from Normal.log_prob()
+            R_i                — scalar reward for episode i
+            log_p_discrete_t   — log π(a_discrete | s_t), tensor from Categorical.log_prob()
+            log_p_continuous_t — log π(bet | s_t),        tensor from Normal.log_prob()
                                  (zero tensor if action was not BET)
 
         Both log_prob tensors are still attached to the computation graph
@@ -102,17 +120,3 @@ class LearningLoop:
         # Clip to avoid exploding gradients (common issue with REINFORCE)
         torch.nn.utils.clip_grad_norm_(self.current_model.parameters(), max_norm=1.0)
         self.optimizer.step()
-
-    # ------------------------------------------------------------------
-    # Checkpointing
-    # ------------------------------------------------------------------
-
-    def _save_checkpoint(self, epoch: int):
-        torch.save(
-            {
-                "epoch": epoch,
-                "model_state_dict": self.current_model.state_dict(),
-                "optimizer_state_dict": self.optimizer.state_dict(),
-            },
-            self.config.get("latest_checkpoint_path", "latest_checkpoint.pt"),
-        )
