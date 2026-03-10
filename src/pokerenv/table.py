@@ -101,7 +101,7 @@ class Table(gym.Env):
         return self._get_observation(self.players[self.next_player_i])
 
     def reset_hand(self):
-        """Resets only cards and pot, mantenendo stack e giocatori invariati."""
+        """Resets only cards and pot"""
         self.current_turn = 0
         self.active_players = self.n_players
         self.next_player_i = 0 if self.n_players == 2 else 2
@@ -120,7 +120,6 @@ class Table(gym.Env):
             player.reset()
             player.position = i
             player.cards = [initial_draw[i], initial_draw[i + self.n_players]]
-            # ← NON tocchiamo player.stack
 
         if self.hh.enabled:
             self.hh.initialize(self.players)

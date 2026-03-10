@@ -577,9 +577,14 @@ class PokerUI:
     # ──────────────────────────────────────────────────────────────────
 
     def _new_hand(self):
-        self.n_players = self.players_var.get()
-        self.table = TestTable(n_players=self.n_players)
-        self.snapshot = self.table.reset()
+        # Check if player count changed - only then create new table
+        if self.players_var.get() != self.n_players:
+            self.n_players = self.players_var.get()
+            self.table = TestTable(n_players=self.n_players)
+            self.snapshot = self.table.reset(new=True)
+        else:
+            # Same player count - just reset the hand, preserve stacks
+            self.snapshot = self.table.reset(new=False)
         self.viewing_as = self.snapshot["acting_player"] or 0
         self._refresh()
 
