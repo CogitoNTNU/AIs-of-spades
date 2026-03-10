@@ -24,12 +24,12 @@ class Game:
         self.trajectory = []
         self.reward = 0.0
 
-        active_opponents = rn.randint(1, 5)
+        self.active_opponents = rn.randint(1, 5)
         player_names = {i: "player_%d" % (i + 1) for i in range(6)}
         player_names[0] = MAIN_CHARACTER_NAME
 
         self.agents = [PlayerAgent(0, MAIN_CHARACTER_NAME, 0, self.current_model)]
-        for n in range(1, active_opponents + 1):
+        for n in range(1, self.active_opponents + 1):
             self.agents.append(
                 PlayerAgent(
                     n, player_names[n], 0, self.weight_manager.sample_opponent()
@@ -37,7 +37,7 @@ class Game:
             )
 
         self.table = Table(
-            active_opponents + 1,
+            self.active_opponents + 1,
             players=self.agents,
             stack_low=50,
             stack_high=200,
@@ -47,13 +47,13 @@ class Game:
         self.table.seed(None)
 
     def play(self, total_hands: int):
+        self.reset()
         if self.table is None:
             raise Exception("Table should not be None")
 
-        self.reset()
         for hand_index in range(total_hands):
             obs_array = self.table.reset_hand()
-            obs = Observation(obs_array)
+            obs = Observation(obs_array, self._get_point_of_view(obs_array[0], self.table.hand_log))
 
             while True:
                 acting_player_i = int(obs.player_identifier)
@@ -84,6 +84,15 @@ class Game:
                             return self.reward, self.trajectory
                     break
 
-                obs = Observation(obs_array)
+                obs = Observation(obs_array, self._get_point_of_view(obs_array[0], self.table.hand_log))
+
 
         return self.reward, self.trajectory
+
+    def _get_point_of_view(self, player, hand_log):
+        if player == 0:
+            return hand_log
+        hand_log = hand_log.copy()  # evita modifiche in-place
+        mask = hand_log[:, 0] != -1.0
+        hand_log[mask, 0] = (hand_log[mask, 0] - player) % (self.active_opponents + 1)
+        return hand_log

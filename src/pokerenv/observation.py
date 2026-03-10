@@ -55,7 +55,7 @@ class BetRangeObservation:
 
 
 class Observation:
-    def __init__(self, obs_matrix):
+    def __init__(self, obs_matrix, hand_log):
         self.player_identifier = obs_matrix[0]
         self.actions = ActionsObservation(obs_matrix[1:5])
         self.bet_range = BetRangeObservation(obs_matrix[5:7])
@@ -74,7 +74,8 @@ class Observation:
             OtherPlayerObservation(obs_matrix[29 + i : 29 + i + 6])
             for i in range(0, (len(obs_matrix) - 29) // 6, 6)
         ]
+        self.hand_log = hand_log
 
     @staticmethod
     def empty():
-        return Observation(np.zeros(59, dtype=np.float32))
+        return Observation(np.zeros(59, dtype=np.float32), np.full((32, 4), -1), dtype=np.float32)
