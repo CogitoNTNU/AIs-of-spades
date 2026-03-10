@@ -16,7 +16,7 @@ if __name__ == "__main__":
 
     wandb.init(
         project="AIs-Of-Spades",
-        entity="cogito-ntnu-org/pokerai",
+        entity="pokerai",
         config=config,
     )
 
