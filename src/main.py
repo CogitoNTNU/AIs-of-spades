@@ -2,12 +2,13 @@ import os
 import wandb
 from pokerenv.learning_loop import LearningLoop
 from pokerenv.weight_manager import WeightManager
-from nn.nn import PokerNet
+from nn.nn import EvenNet
 import yaml
 
 # Load the config file
 model_classes = {
-    "PokerNet": PokerNet,
+    "EvenNet": EvenNet,
+    # ...
 }
 
 if __name__ == "__main__":

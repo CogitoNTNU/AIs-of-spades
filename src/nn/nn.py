@@ -1,4 +1,5 @@
 from typing import Literal, Tuple, Union
+from nn.poker_net import PokerNet
 import torch
 import torch.nn as nn
 from pokerenv.observation import Observation
@@ -195,7 +196,7 @@ class BetsNN(nn.Module):
         return self.net(bets)
 
 
-class PokerNet(nn.Module):
+class EvenNet(PokerNet):
     """
     Integrated Poker network that combines cards, bets, and game state.
 
@@ -388,10 +389,7 @@ class PokerNet(nn.Module):
         self,
         observation: Observation,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-
-        print(self._hand_state)
-        print(self._game_state)
-
+        
         if self._hand_state is None or self._game_state is None:
             raise RuntimeError("Internal state not initialized.")
 
