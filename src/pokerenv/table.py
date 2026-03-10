@@ -100,6 +100,41 @@ class Table(gym.Env):
 
         return self._get_observation(self.players[self.next_player_i])
 
+    def reset_hand(self):
+        """Resets only cards and pot, mantenendo stack e giocatori invariati."""
+        self.current_turn = 0
+        self.active_players = self.n_players
+        self.next_player_i = 0 if self.n_players == 2 else 2
+        self.current_player_i = self.next_player_i
+        self.first_to_act = None
+        self.street_finished = False
+        self.hand_is_over = False
+
+        self.betting.reset()
+        self.pot_mgr.reset()
+        self.street_mgr.reset()
+        self.hh.reset()
+
+        initial_draw = self.street_mgr.deal_hole_cards(self.n_players)
+        for i, player in enumerate(self.players):
+            player.reset()
+            player.position = i
+            player.cards = [initial_draw[i], initial_draw[i + self.n_players]]
+            # ← NON tocchiamo player.stack
+
+        if self.hh.enabled:
+            self.hh.initialize(self.players)
+
+        self._post_blinds()
+
+        for player in self.players:
+            player.acted_this_street = False
+
+        if self.hh.enabled:
+            self.hh.write_hole_cards(self.players)
+
+        return self._get_observation(self.players[self.next_player_i])
+
     def step(self, action: Action):
         self.current_player_i = self.next_player_i
         player = self.players[self.current_player_i]

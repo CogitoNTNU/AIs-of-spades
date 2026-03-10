@@ -49,7 +49,7 @@ class TestTable:
     def reset(self) -> dict:
         self.hand_log = []
         self.done = False
-        obs_array = self.table.reset()
+        obs_array = self.table.reset_hand()
         self.current_obs = Observation(obs_array)
         return self.snapshot()
 

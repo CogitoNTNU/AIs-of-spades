@@ -58,7 +58,7 @@ class Game:
         self.reset()
 
         for _ in range(total_hands):
-            obs_array = self.table.reset()
+            obs_array = self.table.reset_hand()
             obs = Observation(obs_array)
 
             while True:
