@@ -46,10 +46,13 @@ class TestTable:
     # Public API
     # ------------------------------------------------------------------
 
-    def reset(self) -> dict:
+    def reset(self, new=False) -> dict:
         self.hand_log = []
         self.done = False
-        obs_array = self.table.reset()
+        if new:
+            obs_array = self.table.reset()
+        else:
+            obs_array = self.table.reset_hand()
         self.current_obs = Observation(obs_array)
         return self.snapshot()
 

@@ -47,18 +47,12 @@ class Game:
         self.table.seed(None)
 
     def play(self, total_hands: int):
-        """
-        Plays `total_hands` hands and returns (total_reward, trajectory).
+        if self.table is None:
+            raise Exception("Table should not be None")
 
-        trajectory is a list of (log_p_discrete, log_p_continuous) tensors
-        for every step the main character took. These tensors are still
-        attached to the computation graph of current_model, so that
-        loss.backward() works correctly in LearningLoop.
-        """
         self.reset()
-
-        for _ in range(total_hands):
-            obs_array = self.table.reset()
+        for hand_index in range(total_hands):
+            obs_array = self.table.reset_hand()
             obs = Observation(obs_array)
 
             while True:
@@ -72,7 +66,6 @@ class Game:
 
                 action = self.agents[acting_player_i].get_action(obs)
 
-                # Store log_probs ONLY for the main character, as tensors
                 if acting_player_i == 0:
                     self.trajectory.append(
                         (action.log_p_discrete, action.log_p_continuous)
@@ -86,6 +79,9 @@ class Game:
                         reward = main_character.get_reward()
                         if reward is not None:
                             self.reward += reward
+
+                        if main_character.stack <= 0:
+                            return self.reward, self.trajectory
                     break
 
                 obs = Observation(obs_array)
