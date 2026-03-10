@@ -3,6 +3,7 @@ import torch
 import glob
 import random
 
+
 class WeightManager:
 
     def __init__(self, config):
@@ -17,18 +18,26 @@ class WeightManager:
 
         os.makedirs(self.models_dir, exist_ok=True)
 
-    def save(self, model, epoch: int):
+    def save(self, model, optimizer, epoch: int):  # aggiungi optimizer
 
-        path = os.path.join(self.models_dir, f"epoch_{epoch}.pt")
-        state_dict = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+        path = os.path.join(self.checkpoint_dir, f"epoch_{epoch}.pt")
+        state_dict = {
+            "model_state_dict": {
+                k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+            },
+            "optimizer_state_dict": optimizer.state_dict(),
+            "epoch": epoch,
+        }
         torch.save(state_dict, path)
         print(f"Saved checkpoint: {path}")
 
-        self.snapshots.append({
-            "epoch": epoch,
-            "path": path,
-            "state_dict": state_dict,
-        })
+        self.snapshots.append(
+            {
+                "epoch": epoch,
+                "path": path,
+                "state_dict": state_dict,
+            }
+        )
 
         self._trim_pool()
 
@@ -36,9 +45,9 @@ class WeightManager:
 
         if len(self.snapshots) <= self.max_models:
             return
-        
-        latest = self.snapshots[-self.keep_latest:]
-        older = self.snapshots[:-self.keep_latest]
+
+        latest = self.snapshots[-self.keep_latest :]
+        older = self.snapshots[: -self.keep_latest]
 
         if older:
             to_remove = random.choice(older)
@@ -61,16 +70,20 @@ class WeightManager:
         if not self.snapshots:
             # If no checkpoints are available, return a randomly initialized model
             return self.model_class()
-        
+
         if self.sampling_mode == "uniform":
             chosen_file = random.choice(self.snapshots)["path"]
         elif self.sampling_mode == "linear":
             weights = list(range(1, len(self.snapshots) + 1))
-            chosen_file = random.choices([s["path"] for s in self.snapshots], weights=weights, k=1)[0]
+            chosen_file = random.choices(
+                [s["path"] for s in self.snapshots], weights=weights, k=1
+            )[0]
         elif self.sampling_mode == "exponential":
-            weights = [2 ** i for i in range(len(self.snapshots))]
-            chosen_file = random.choices([s["path"] for s in self.snapshots], weights=weights, k=1)[0]
+            weights = [2**i for i in range(len(self.snapshots))]
+            chosen_file = random.choices(
+                [s["path"] for s in self.snapshots], weights=weights, k=1
+            )[0]
         else:
             raise ValueError(f"Unknown sampling mode: {self.sampling_mode}")
-        
+
         return self.load(chosen_file)
