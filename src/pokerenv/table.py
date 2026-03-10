@@ -168,8 +168,6 @@ class Table(gym.Env):
         else:
             obs = self._get_observation(self.players[self.next_player_i])
 
-        print(self.hand_log)
-
         rewards = np.asarray([p.get_reward() for p in sorted(self.players)])
         return obs, rewards, self.hand_is_over, {}
 
