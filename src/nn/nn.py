@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from pokerenv.observation import Observation
 
+
 class CardsCNN(nn.Module):
     """
     CNN for processing card information.
@@ -307,18 +308,16 @@ class PokerNet(nn.Module):
 
         device = next(self.parameters()).device
 
-        self._hand_state = torch.zeros(
-            batch_size, self.hand_state_dim, device=device
-        )
+        self._hand_state = torch.zeros(batch_size, self.hand_state_dim, device=device)
 
-        self._game_state = torch.zeros(
-            batch_size, self.game_state_dim, device=device
-        )
+        self._game_state = torch.zeros(batch_size, self.game_state_dim, device=device)
 
-    def preprocess_observation(self, observation: Observation) -> Tuple[torch.Tensor, torch.Tensor]:
+    def preprocess_observation(
+        self, observation: Observation
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Converts a single Observation object into card and betting tensors.
-        
+
         Returns:
             cards: [4, 4, 13] one-hot tensor for hand+table
             bets: [bets_dim] tensor for numeric betting info
@@ -331,7 +330,9 @@ class PokerNet(nn.Module):
         for i, card_obs in enumerate(observation.hand_cards.cards):
             suit_idx = int(card_obs.suit)  # make sure suit is 0-3
             rank_idx = int(card_obs.rank)  # make sure rank is 0-12
-            card_tensor[i // 4, i % 4, rank_idx] = 1.0  # simple one-hot rank, slot by slot
+            card_tensor[i // 4, i % 4, rank_idx] = (
+                1.0  # simple one-hot rank, slot by slot
+            )
 
         # Encode table cards (up to 5 cards)
         for j, card_obs in enumerate(observation.table_cards.cards):
@@ -348,32 +349,36 @@ class PokerNet(nn.Module):
         bets_list.append(float(observation.player_money_in_pot))
         bets_list.append(float(observation.bet_this_street))
         bets_list.append(float(observation.street))
-        
+
         # Bet range
         bets_list.append(float(observation.bet_range.lower_bound))
         bets_list.append(float(observation.bet_range.upper_bound))
         bets_list.append(float(observation.bet_to_match))
         bets_list.append(float(observation.minimum_raise))
-        
+
         # Actions as binary
         actions = observation.actions
-        bets_list.extend([
-            float(actions.can_check()),
-            float(actions.can_fold()),
-            float(actions.can_bet()),
-            float(actions.can_call()),
-        ])
+        bets_list.extend(
+            [
+                float(actions.can_check()),
+                float(actions.can_fold()),
+                float(actions.can_bet()),
+                float(actions.can_call()),
+            ]
+        )
 
         # Others
         for other in observation.others:
-            bets_list.extend([
-                float(other.position),
-                float(other.state),
-                float(other.stack),
-                float(other.money_in_pot),
-                float(other.bet_this_street),
-                float(other.is_all_in)
-            ])
+            bets_list.extend(
+                [
+                    float(other.position),
+                    float(other.state),
+                    float(other.stack),
+                    float(other.money_in_pot),
+                    float(other.bet_this_street),
+                    float(other.is_all_in),
+                ]
+            )
 
         bets_tensor = torch.tensor(bets_list, dtype=torch.float32)
 
@@ -383,7 +388,7 @@ class PokerNet(nn.Module):
         self,
         observation: Observation,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        
+
         print(self._hand_state)
         print(self._game_state)
 

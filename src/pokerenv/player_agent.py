@@ -4,7 +4,8 @@ import torch
 import torch.distributions as D
 
 from pokerenv.observation import Observation
-from pokerenv.common import Action, PlayerAction
+from pokerenv.common import PlayerAction
+from pokerenv.action import Action
 from pokerenv.player import Player
 from nn.nn import PokerNet
 
