@@ -8,7 +8,7 @@ class WeightManager:
 
     def __init__(self, config):
         self.model_class = config.get("model_class")
-        self.checkpoint_dir = config.get("checkpoint_dir", "checkpoints")
+        self.models_dir = config.get("models_dir")
         self.max_models = config.get("max_models", 50)
         self.keep_latest = config.get("keep_latest", 20)
         self.sampling_mode = config.get("sampling_mode", "uniform")
@@ -16,7 +16,7 @@ class WeightManager:
         self.snapshots = []
         self.cache = {}
 
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        os.makedirs(self.models_dir, exist_ok=True)
 
     def save(self, model, optimizer, epoch: int):  # aggiungi optimizer
 
