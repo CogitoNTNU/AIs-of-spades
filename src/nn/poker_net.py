@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Tuple
-from src.pokerenv.observation import Observation
+from pokerenv.observation import Observation
 import torch
 import torch.nn as nn
 
@@ -22,21 +22,21 @@ class PokerNet(nn.Module, ABC):
         """
         pass
 
-    @abstractmethod
-    def signal_hand_end(self):
-        """
-        Signal the end of a hand and provide the final reward.
-        This can be used to update internal state or perform learning updates.
-        """
-        pass
+    # @abstractmethod
+    # def signal_hand_end(self):
+    #     """
+    #     Signal the end of a hand and provide the final reward.
+    #     This can be used to update internal state or perform learning updates.
+    #     """
+    #     pass
 
-    @abstractmethod
-    def signal_game_end(self, reward: float):
-        """
-        Signal the end of a game and provide the final reward.
-        This can be used to update internal state or perform learning updates.
-        """
-        pass
+    # @abstractmethod
+    # def signal_game_end(self, reward: float):
+    #     """
+    #     Signal the end of a game and provide the final reward.
+    #     This can be used to update internal state or perform learning updates.
+    #     """
+    #     pass
 
     # more functions can be added
 
