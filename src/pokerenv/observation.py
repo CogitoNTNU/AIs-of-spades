@@ -1,9 +1,10 @@
 import numpy as np
+import math
 
 
 class CardObservation:
     def __init__(self, card):
-        self.suit = card[0]
+        self.suit = math.log2(card[0]) if card[0] > 0 else 0
         self.rank = card[1]
 
 
@@ -81,9 +82,9 @@ class Observation:
 
     @staticmethod
     def empty():
-        return Observation(
-            np.zeros(59, dtype=np.float32), np.full((32, 4), -1), dtype=np.float32
-        )
+        obs_array = np.zeros(59, dtype=np.float32)
+        hand_log = np.full((32, 4), -1.0, dtype=np.float32)
+        return Observation(obs_array, hand_log)
 
     def __str__(self) -> str:
         hand = [(c.suit, c.rank) for c in self.hand_cards.cards]

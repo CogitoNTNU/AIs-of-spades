@@ -204,7 +204,9 @@ class Table(gym.Env):
         if action.action_type is PlayerAction.FOLD:
             player.fold()
             self.active_players -= 1
-            self.update_hand_log(player.identifier, PlayerAction.FOLD.value, 0, self.street_mgr.street)
+            self.update_hand_log(
+                player.identifier, PlayerAction.FOLD.value, 0, self.street_mgr.street
+            )
             self.hh.write("%s: folds" % player.name)
 
         elif action.action_type is PlayerAction.CALL:
@@ -212,15 +214,30 @@ class Table(gym.Env):
             call_size = player.check_or_call(self.betting.bet_to_match)
             self.pot_mgr.add(call_size)
             if self.betting.bet_to_match == 0 or call_size == 0:
-                self.update_hand_log(player.identifier, PlayerAction.CALL.value, 0, self.street_mgr.street)
+                self.update_hand_log(
+                    player.identifier,
+                    PlayerAction.CALL.value,
+                    0,
+                    self.street_mgr.street,
+                )
                 self.hh.write("%s: checks" % player.name)
             elif player.all_in:
-                self.update_hand_log(player.identifier, PlayerAction.CALL.value, call_size/stack, self.street_mgr.street)
+                self.update_hand_log(
+                    player.identifier,
+                    PlayerAction.CALL.value,
+                    call_size / stack,
+                    self.street_mgr.street,
+                )
                 self.hh.write(
                     "%s: calls $%.2f and is all-in" % (player.name, call_size * BB)
                 )
             else:
-                self.update_hand_log(player.identifier, PlayerAction.CALL.value, call_size/stack, self.street_mgr.street)
+                self.update_hand_log(
+                    player.identifier,
+                    PlayerAction.CALL.value,
+                    call_size / stack,
+                    self.street_mgr.street,
+                )
                 self.hh.write("%s: calls $%.2f" % (player.name, call_size * BB))
 
         elif action.action_type is PlayerAction.BET:
@@ -231,10 +248,20 @@ class Table(gym.Env):
             total = actual + prev_bet
             suffix = " and is all-in" if player.all_in else ""
             if self.betting.bet_to_match == 0:
-                self.update_hand_log(player.identifier, PlayerAction.BET.value, actual/stack, self.street_mgr.street)
+                self.update_hand_log(
+                    player.identifier,
+                    PlayerAction.BET.value,
+                    actual / stack,
+                    self.street_mgr.street,
+                )
                 self.hh.write("%s: bets $%.2f%s" % (player.name, actual * BB, suffix))
             else:
-                self.update_hand_log(player.identifier, PlayerAction.BET.value, actual/stack, self.street_mgr.street)
+                self.update_hand_log(
+                    player.identifier,
+                    PlayerAction.BET.value,
+                    actual / stack,
+                    self.street_mgr.street,
+                )
                 self.hh.write(
                     "%s: raises $%.2f to $%.2f%s"
                     % (
@@ -255,22 +282,39 @@ class Table(gym.Env):
         if fallback is PlayerAction.FOLD:
             player.fold()
             self.active_players -= 1
-            self.update_hand_log(player.identifier, PlayerAction.FOLD.value, 0, self.street_mgr.street)
+            self.update_hand_log(
+                player.identifier, PlayerAction.FOLD.value, 0, self.street_mgr.street
+            )
             self.hh.write("%s: folds" % player.name)
         elif fallback is PlayerAction.CALL:
             stack = player.stack
             call_size = player.check_or_call(self.betting.bet_to_match)
             self.pot_mgr.add(call_size)
             if self.betting.bet_to_match == 0 or call_size == 0:
-                self.update_hand_log(player.identifier, PlayerAction.CALL.value, 0, self.street_mgr.street)
+                self.update_hand_log(
+                    player.identifier,
+                    PlayerAction.CALL.value,
+                    0,
+                    self.street_mgr.street,
+                )
                 self.hh.write("%s: checks" % player.name)
             elif player.all_in:
-                self.update_hand_log(player.identifier, PlayerAction.CALL.value, call_size/stack, self.street_mgr.street)
+                self.update_hand_log(
+                    player.identifier,
+                    PlayerAction.CALL.value,
+                    call_size / stack,
+                    self.street_mgr.street,
+                )
                 self.hh.write(
                     "%s: calls $%.2f and is all-in" % (player.name, call_size * BB)
                 )
             else:
-                self.update_hand_log(player.identifier, PlayerAction.CALL.value, call_size/stack, self.street_mgr.street)
+                self.update_hand_log(
+                    player.identifier,
+                    PlayerAction.CALL.value,
+                    call_size / stack,
+                    self.street_mgr.street,
+                )
                 self.hh.write("%s: calls $%.2f" % (player.name, call_size * BB))
 
     def _check_street_or_hand_over(self):
@@ -408,10 +452,15 @@ class Table(gym.Env):
             observation[34 + i * 6] = int(other.all_in)
 
         return observation
-    
+
     def update_hand_log(self, player_id, action_value, bet_fraction, street):
         if self.hand_number < self.hand_log.shape[0]:
-            self.hand_log[self.hand_number] = [player_id, action_value, bet_fraction, street]
+            self.hand_log[self.hand_number] = [
+                player_id,
+                action_value,
+                bet_fraction,
+                street,
+            ]
         else:
             self.hand_log = np.roll(self.hand_log, -1, axis=0)
             self.hand_log[-1] = [player_id, action_value, bet_fraction, street]

@@ -329,26 +329,20 @@ class EvenNet(PokerNet):
         card_tensor = torch.zeros((4, 4, 13), dtype=torch.float32)
 
         # Encode hand cards
-        for i, card_obs in enumerate(observation.hand_cards.cards):
-            suit_idx = int(card_obs.suit) % 4
+        for card_obs in observation.hand_cards.cards:
+            suit_idx = int(card_obs.suit)
             rank_idx = int(card_obs.rank)
-
-            # channel = suit
-            # slot = card index
-            card_tensor[suit_idx, i, rank_idx] = 1.0
+            card_tensor[0, suit_idx, rank_idx] = 1.0
 
         # Encode table cards
         offset = len(observation.hand_cards.cards)
 
+        table_mapping = [1, 1, 1, 2, 3]
         for j, card_obs in enumerate(observation.table_cards.cards):
-            idx = j + offset
-            if idx >= 4:
-                break
-
+            slot = table_mapping[j]
             suit_idx = int(card_obs.suit)
             rank_idx = int(card_obs.rank)
-
-            card_tensor[suit_idx, idx, rank_idx] = 1.0
+            card_tensor[slot, suit_idx, rank_idx] = 1.0
 
         # --------- BET HISTORY ---------
 
