@@ -14,7 +14,7 @@ class PokerNet(nn.Module, ABC):
     def forward(
         self,
         observation: Observation,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Must return:
             - action_logits

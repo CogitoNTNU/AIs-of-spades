@@ -7,7 +7,7 @@ from pokerenv.observation import Observation
 from pokerenv.common import PlayerAction
 from pokerenv.action import Action
 from pokerenv.player import Player
-from nn.nn import PokerNet
+from nn.poker_net import PokerNet
 
 
 class PlayerAgent(Player):

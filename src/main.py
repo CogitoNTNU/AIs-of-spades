@@ -2,7 +2,7 @@ import os
 import wandb
 from pokerenv.learning_loop import LearningLoop
 from pokerenv.weight_manager import WeightManager
-from nn.nn import EvenNet
+from nn import EvenNet
 import yaml
 
 # Load the config file
