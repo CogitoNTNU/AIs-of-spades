@@ -60,7 +60,14 @@ class WeightManager:
             return self.cache[filename]
 
         model = self.model_class()
-        model.load_state_dict(torch.load(filename))
+        checkpoint = torch.load(filename)
+
+        # Extract the actual model weights
+        if "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
+        else:
+            model.load_state_dict(checkpoint)  # fallback if raw state_dict
+
         self.cache[filename] = model
         return model
 

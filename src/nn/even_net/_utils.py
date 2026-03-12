@@ -14,7 +14,6 @@ def preprocess_observation(
         bets: [128] tensor (flattened hand log)
     """
 
-    print(observation)
     # --------- CARDS ---------
     card_tensor = torch.zeros((4, 4, 13), dtype=torch.float32)
 

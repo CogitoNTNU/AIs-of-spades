@@ -10,12 +10,9 @@ class CardObservation:
 
 class HandObservation:
     def __init__(self, cards):
-        print(cards)
-        print(len(cards))
         self.cards = [
             CardObservation(cards[i : i + 2]) for i in range(0, len(cards) - 1, 2)
         ]
-        print(f"Self: {len(self.cards)}")
 
 
 class TableObservation:
