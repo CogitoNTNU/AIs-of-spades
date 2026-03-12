@@ -1,6 +1,8 @@
 import numpy as np
 import torch
 import torch.optim as optim
+import torch.distributions as D
+from nn.poker_net import PokerNet
 import wandb
 import torch.multiprocessing as mp
 
@@ -31,7 +33,7 @@ class LearningLoop:
         self.config = config["learning_loop"]
         self.num_workers = self.config.get("num_workers", mp.cpu_count())
 
-        self.current_model = config["weight_manager"]["model_class"]()
+        self.current_model: PokerNet = config["weight_manager"]["model_class"]()
         self.current_model.initialize_internal_state()
 
         self.optimizer = optim.Adam(
@@ -152,7 +154,7 @@ class LearningLoop:
             R_i                — scalar reward for episode i
             log_p_discrete_t   — log π(a_discrete | s_t), tensor from Categorical.log_prob()
             log_p_continuous_t — log π(bet | s_t),        tensor from Normal.log_prob()
-                                 (zero tensor if action was not BET)
+                                (zero tensor if action was not BET)
 
         Both log_prob tensors are still attached to the computation graph
         of current_model, so .backward() propagates gradients correctly.
@@ -164,8 +166,15 @@ class LearningLoop:
                 continue
 
             reward_tensor = torch.tensor(reward, dtype=torch.float32)
+            for obs, action in trajectory:
+                action_logits, bet_mean, bet_std = self.current_model.forward(obs)
 
-            for log_p_discrete, log_p_continuous in trajectory:
+                discrete_dist = D.Categorical(logits=action_logits)
+                log_p_discrete = discrete_dist.log_prob(action.action_tensor)
+
+                continuous_dist = D.Normal(bet_mean, bet_std)
+                log_p_continuous = continuous_dist.log_prob(action.bet_tensor)
+
                 # REINFORCE: -R * log π(a | s)
                 step_loss = -reward_tensor * (log_p_discrete + log_p_continuous)
                 step_losses.append(step_loss)

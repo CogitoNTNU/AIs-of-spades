@@ -22,6 +22,15 @@ class PokerNet(nn.Module, ABC):
         """
         pass
 
+    @abstractmethod
+    def initialize_internal_state(self) -> None:
+        """
+        Must return:
+            - action_logits
+            - value
+        """
+        pass
+
     # @abstractmethod
     # def signal_hand_end(self):
     #     """

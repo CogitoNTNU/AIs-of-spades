@@ -76,6 +76,11 @@ class Observation:
             for i in range(0, (len(obs_matrix) - 29) // 6, 6)
         ]
         self.hand_log = hand_log
+        self.is_replay = False
+
+    def add_network_internal_state(self, network_internal_state):
+        self.is_replay = True
+        self.network_internal_state = network_internal_state
 
     @staticmethod
     def empty():

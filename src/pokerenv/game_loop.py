@@ -53,7 +53,9 @@ class Game:
 
         for hand_index in range(total_hands):
             obs_array = self.table.reset_hand()
-            obs = Observation(obs_array, self._get_point_of_view(obs_array[0], self.table.hand_log))
+            obs = Observation(
+                obs_array, self._get_point_of_view(obs_array[0], self.table.hand_log)
+            )
 
             while True:
                 acting_player_i = int(obs.player_identifier)
@@ -67,9 +69,7 @@ class Game:
                 action = self.agents[acting_player_i].get_action(obs)
 
                 if acting_player_i == 0:
-                    self.trajectory.append(
-                        (action.log_p_discrete, action.log_p_continuous)
-                    )
+                    self.trajectory.append((obs, action))
 
                 obs_array, rewards, done, _ = self.table.step(action)
 
@@ -84,8 +84,10 @@ class Game:
                             return self.reward, self.trajectory
                     break
 
-                obs = Observation(obs_array, self._get_point_of_view(obs_array[0], self.table.hand_log))
-
+                obs = Observation(
+                    obs_array,
+                    self._get_point_of_view(obs_array[0], self.table.hand_log),
+                )
 
         return self.reward, self.trajectory
 
