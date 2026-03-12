@@ -320,81 +320,57 @@ class EvenNet(PokerNet):
         Converts a single Observation object into card and betting tensors.
 
         Returns:
-            cards: [4, 4, 13] one-hot tensor for hand+table
-            bets: [bets_dim] tensor for numeric betting info
+            cards: [4, 4, 13] tensor
+            bets: [128] tensor (flattened hand log)
         """
+
+        print(observation)
         # --------- CARDS ---------
-        # We'll create a fixed 4x4x13 tensor for cards (hand + table)
         card_tensor = torch.zeros((4, 4, 13), dtype=torch.float32)
 
-        # Encode hand cards (2 cards)
-        for i, card_obs in enumerate(observation.hand_cards.cards):
-            suit_idx = int(card_obs.suit)  # make sure suit is 0-3
-            rank_idx = int(card_obs.rank)  # make sure rank is 0-12
-            card_tensor[i // 4, i % 4, rank_idx] = (
-                1.0  # simple one-hot rank, slot by slot
-            )
+        # Encode hand cards
+        for card_obs in observation.hand_cards.cards:
+            suit_idx = int(card_obs.suit)
+            rank_idx = int(card_obs.rank)
+            card_tensor[0, suit_idx, rank_idx] = 1.0
 
-        # Encode table cards (up to 5 cards)
+        # Encode table cards
+        offset = len(observation.hand_cards.cards)
+
+        table_mapping = [1, 1, 1, 2, 3]
         for j, card_obs in enumerate(observation.table_cards.cards):
-            idx = j + len(observation.hand_cards.cards)
-            if idx >= 16:  # prevent overflow
-                break
-            card_tensor[idx // 4, idx % 4, int(card_obs.rank)] = 1.0
+            slot = table_mapping[j]
+            suit_idx = int(card_obs.suit)
+            rank_idx = int(card_obs.rank)
+            card_tensor[slot, suit_idx, rank_idx] = 1.0
 
-        # --------- BETTING / NUMERIC INFO ---------
-        bets_list = []
+        # --------- BET HISTORY ---------
 
-        # Player info
-        bets_list.append(float(observation.player_stack))
-        bets_list.append(float(observation.player_money_in_pot))
-        bets_list.append(float(observation.bet_this_street))
-        bets_list.append(float(observation.street))
+        # convert numpy log to tensor
+        bets_tensor = torch.from_numpy(observation.hand_log).float()
 
-        # Bet range
-        bets_list.append(float(observation.bet_range.lower_bound))
-        bets_list.append(float(observation.bet_range.upper_bound))
-        bets_list.append(float(observation.bet_to_match))
-        bets_list.append(float(observation.minimum_raise))
-
-        # Actions as binary
-        actions = observation.actions
-        bets_list.extend(
-            [
-                float(actions.can_check()),
-                float(actions.can_fold()),
-                float(actions.can_bet()),
-                float(actions.can_call()),
-            ]
-        )
-
-        # Others
-        for other in observation.others:
-            bets_list.extend(
-                [
-                    float(other.position),
-                    float(other.state),
-                    float(other.stack),
-                    float(other.money_in_pot),
-                    float(other.bet_this_street),
-                    float(other.is_all_in),
-                ]
-            )
-
-        bets_tensor = torch.tensor(bets_list, dtype=torch.float32)
+        # flatten [32,4] → [128]
+        bets_tensor = bets_tensor.flatten()
 
         return card_tensor, bets_tensor
 
     def forward(
         self,
         observation: Observation,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
         if self._hand_state is None or self._game_state is None:
             raise RuntimeError("Internal state not initialized.")
 
         # extract cards and bets from the observations
         cards, bets = self.preprocess_observation(observation)
+
+        # ensure batch dimension
+        if cards.dim() == 3:
+            cards = cards.unsqueeze(0)
+
+        if bets.dim() == 1:
+            bets = bets.unsqueeze(0)
 
         # branches
         fa = self.cards_branch(cards)
