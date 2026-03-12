@@ -27,7 +27,7 @@ class PlayerAgent(Player):
 
         # --- Discrete action ---
         # action_logits: torch.Tensor of shape (n_actions,), after softmax
-        discrete_dist = D.Categorical(probs=action_logits)
+        discrete_dist = D.Categorical(logits=action_logits)
         d = discrete_dist.sample()  # scalar tensor
         log_p_discrete = discrete_dist.log_prob(d)  # scalar tensor, attached to graph
 
@@ -51,7 +51,7 @@ class PlayerAgent(Player):
         action_type = d.item()
 
         return Action(
-            action_type=action_type,
+            action_type=PlayerAction(action_type),
             log_p_discrete=log_p_discrete,  # tensor — kept for backward()
             bet_amount=bet_value,  # float — used by Table
             log_p_continuous=log_p_continuous,  # tensor — kept for backward()

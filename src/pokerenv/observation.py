@@ -9,9 +9,12 @@ class CardObservation:
 
 class HandObservation:
     def __init__(self, cards):
+        print(cards)
+        print(len(cards))
         self.cards = [
             CardObservation(cards[i : i + 2]) for i in range(0, len(cards) - 1, 2)
         ]
+        print(f"Self: {len(self.cards)}")
 
 
 class TableObservation:
@@ -59,8 +62,8 @@ class Observation:
         self.player_identifier = obs_matrix[0]
         self.actions = ActionsObservation(obs_matrix[1:5])
         self.bet_range = BetRangeObservation(obs_matrix[5:7])
-        self.player_position = obs_matrix[8]
-        self.hand_cards = HandObservation(obs_matrix[9:12])
+        self.player_position = obs_matrix[7]
+        self.hand_cards = HandObservation(obs_matrix[8:12])
         self.player_stack = obs_matrix[12]
         self.player_money_in_pot = obs_matrix[13]
         self.bet_this_street = obs_matrix[14]
@@ -78,4 +81,39 @@ class Observation:
 
     @staticmethod
     def empty():
-        return Observation(np.zeros(59, dtype=np.float32), np.full((32, 4), -1), dtype=np.float32)
+        return Observation(
+            np.zeros(59, dtype=np.float32), np.full((32, 4), -1), dtype=np.float32
+        )
+
+    def __str__(self) -> str:
+        hand = [(c.suit, c.rank) for c in self.hand_cards.cards]
+        table = [(c.suit, c.rank) for c in self.table_cards.cards]
+        actions = {
+            "check": self.actions.can_check(),
+            "fold": self.actions.can_fold(),
+            "bet": self.actions.can_bet(),
+            "call": self.actions.can_call(),
+        }
+        others_info = []
+        for i, o in enumerate(self.others):
+            others_info.append(
+                f"Player {i}: pos={o.position}, state={o.state}, "
+                f"stack={o.stack}, money_in_pot={o.money_in_pot}, "
+                f"bet_this_street={o.bet_this_street}, all_in={o.is_all_in}"
+            )
+
+        return (
+            f"--------------------- OBS -----------------------\n"
+            f"Observation(player_id={self.player_identifier}, "
+            f"position={self.player_position}, stack={self.player_stack}, "
+            f"money_in_pot={self.player_money_in_pot}, bet_this_street={self.bet_this_street}, "
+            f"street={self.street}, pot={self.pot}, bet_to_match={self.bet_to_match}, "
+            f"minimum_raise={self.minimum_raise},\n"
+            f"  hand_cards={hand},\n"
+            f"  table_cards={table},\n"
+            f"  actions={actions},\n"
+            f"  bet_range=({self.bet_range.lower_bound}, {self.bet_range.upper_bound}),\n"
+            f"  others=[\n    " + "\n    ".join(others_info) + "\n  ],\n"
+            f"  hand_log_shape={self.hand_log.shape})"
+            f"-------------------------------------------------\n"
+        )
