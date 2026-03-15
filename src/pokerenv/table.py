@@ -61,6 +61,8 @@ class Table(gym.Env):
         self.hand_number = 0
         self.hand_log = np.full((32, 4), -1.0)
 
+        self.dealer_position = 0
+
     def seed(self, seed=None):
         self.rng = np.random.default_rng(seed)
         self.street_mgr.seed(seed)
@@ -122,11 +124,23 @@ class Table(gym.Env):
         self.street_mgr.reset()
         self.hh.reset()
 
+        self.dealer_position = (self.dealer_position + 1) % self.n_players
+        for player in self.players:
+            player.position = (player.position - self.dealer_position) % self.n_players
+
+        self.next_player_i = 0 if self.n_players == 2 else 2
+        self.current_player_i = self.next_player_i
+
         initial_draw = self.street_mgr.deal_hole_cards(self.n_players)
         for i, player in enumerate(self.players):
             player.reset()
-            player.position = i
             player.cards = [initial_draw[i], initial_draw[i + self.n_players]]
+
+        MIN_STACK_TO_PLAY = 1
+        for player in self.players:
+            if player.stack < MIN_STACK_TO_PLAY:
+                player.state = PlayerState.OUT
+                self.active_players -= 1
 
         if self.hh.enabled:
             self.hh.initialize(self.players)
@@ -169,7 +183,7 @@ class Table(gym.Env):
             obs = self._get_observation(self.players[self.next_player_i])
 
         rewards = np.asarray([p.get_reward() for p in sorted(self.players)])
-        return obs, rewards, self.hand_is_over, {}
+        return obs, rewards, self.hand_is_over
 
     def get_player_by_name(self, name):
         for player in self.players:
@@ -186,7 +200,7 @@ class Table(gym.Env):
             if player.position == TablePosition.SB:
                 self.pot_mgr.add(player.bet(0.5))
                 self.betting.change_bet_to_match(0.5)
-                self.hh.write("%s: posts small blind $%.2f" % (player.name, 2.5))
+                self.hh.write("%s: posts small blind $%.2f" % (player.name, BB / 2))
             elif player.position == TablePosition.BB:
                 self.pot_mgr.add(player.bet(1))
                 self.betting.change_bet_to_match(1)

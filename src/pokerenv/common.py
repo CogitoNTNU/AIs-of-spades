@@ -11,6 +11,7 @@ class GameState(IntEnum):
 class PlayerState(Enum):
     FOLDED = 0
     ACTIVE = 1
+    OUT = 2
 
 
 class PlayerAction(IntEnum):

@@ -8,6 +8,7 @@ import torch.multiprocessing as mp
 
 from pokerenv.weight_manager import WeightManager
 from pokerenv.game_loop import Game
+from pokerenv.common import PlayerAction
 
 
 def _run_game(args):
@@ -104,6 +105,7 @@ class LearningLoop:
                     self._gradient_step(loss)
 
                     avg_reward = np.mean(batch_rewards)
+                    action_stats = self._compute_action_stats(batch_trajectories)
                     wandb.log(
                         {
                             "epoch": epoch,
@@ -120,6 +122,7 @@ class LearningLoop:
                             ),
                             # Gradient norm — useful to verify clipping is working
                             "train/grad_norm": self._get_grad_norm(),
+                            **action_stats,
                         }
                     )
                     print(
@@ -207,3 +210,25 @@ class LearningLoop:
             if p.grad is not None:
                 total_norm += p.grad.data.norm(2).item() ** 2
         return total_norm**0.5
+
+    def _compute_action_stats(self, batch_trajectories: list) -> dict:
+        counts = {PlayerAction.FOLD: 0, PlayerAction.BET: 0, PlayerAction.CALL: 0}
+        bet_amounts = []
+        hands_per_trajectory = [len(t) for t in batch_trajectories]
+
+        for trajectory in batch_trajectories:
+            for _, action in trajectory:
+                counts[action.action_type] += 1
+                if action.action_type == PlayerAction.BET:
+                    bet_amounts.append(action.bet_amount)
+
+        total = sum(counts.values()) or 1
+        return {
+            "action/fold": counts[PlayerAction.FOLD] / total,
+            "action/bet": counts[PlayerAction.BET] / total,
+            "action/call": counts[PlayerAction.CALL] / total,
+            "action/bet_amount": np.mean(bet_amounts) if bet_amounts else 0.0,
+            "train/avg_hands_per_trajectory": np.mean(hands_per_trajectory),
+            "train/min_hands_per_trajectory": np.min(hands_per_trajectory),
+            "train/max_hands_per_trajectory": np.max(hands_per_trajectory),
+        }
