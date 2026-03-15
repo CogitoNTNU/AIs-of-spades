@@ -4,6 +4,7 @@ from pokerenv.player_agent import PlayerAgent
 from pokerenv.table import Table
 from pokerenv.observation import Observation
 from pokerenv.weight_manager import WeightManager
+from pokerenv.common import PlayerState
 
 MAIN_CHARACTER_NAME = "UGO"
 
@@ -45,6 +46,7 @@ class Game:
             invalid_action_penalty=0,
         )
         self.table.seed(None)
+        self.table.reset()
 
     def play(self, total_hands: int):
         self.reset()
@@ -65,13 +67,16 @@ class Game:
                         "player_identifier %d is out of range (agents: %d)"
                         % (acting_player_i, len(self.agents))
                     )
+                acting_agent = self.agents[acting_player_i]
+                if acting_agent.state != PlayerState.ACTIVE or acting_agent.all_in:
+                    break
 
-                action = self.agents[acting_player_i].get_action(obs)
+                action = acting_agent.get_action(obs)
 
                 if acting_player_i == 0:
                     self.trajectory.append((obs, action))
 
-                obs_array, rewards, done, _ = self.table.step(action)
+                obs_array, rewards, done = self.table.step(action)
 
                 if done:
                     main_character = self.table.get_player_by_name(MAIN_CHARACTER_NAME)
