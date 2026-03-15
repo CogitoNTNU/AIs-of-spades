@@ -1,5 +1,6 @@
 # player_agent.py
 import torch.distributions as D
+import torch
 
 from pokerenv.observation import Observation
 from pokerenv.common import PlayerAction
@@ -32,12 +33,9 @@ class PlayerAgent(Player):
         # --- Continuous bet amount ---
         # bet_mean, bet_std: scalar tensors from the network
         continuous_dist = D.Normal(bet_mean, bet_std)
-        bet_sample = continuous_dist.sample()  # scalar tensor
-        log_p_continuous = continuous_dist.log_prob(
-            bet_sample
-        )  # scalar tensor, attached to graph
+        bet_sample = continuous_dist.sample().clamp(0.0, 1.0)
+        log_p_continuous = continuous_dist.log_prob(bet_sample)
 
-        # Scale bet into the valid range from the observation
         bet_value = (
             bet_sample.item()
             * (observation.bet_range.upper_bound - observation.bet_range.lower_bound)

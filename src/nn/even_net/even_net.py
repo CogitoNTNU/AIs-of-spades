@@ -151,7 +151,7 @@ class EvenNet(PokerNet):
         )
 
         game_state = (
-            self._hand_state
+            self._game_state
             if network_internal_state_game == None
             else network_internal_state_game
         )
@@ -169,12 +169,12 @@ class EvenNet(PokerNet):
 
         action_logits = self.policy_head(x)
 
-        bet_mean = self.bet_mean_head(x)
+        bet_mean = torch.sigmoid(self.bet_mean_head(x))
         bet_logvar = self.bet_logvar_head(x)
-        bet_variance = torch.exp(bet_logvar)
+        bet_std = torch.exp(0.5 * bet_logvar).clamp(min=1e-4, max=1.0)
 
         # update internal state
-        self._hand_state = torch.tanh(self.hand_state_head(x))
-        self._game_state = torch.tanh(self.game_state_head(x))
+        self._hand_state = torch.tanh(self.hand_state_head(x)).detach()
+        self._game_state = torch.tanh(self.game_state_head(x)).detach()
 
-        return action_logits, bet_mean, bet_variance
+        return action_logits, bet_mean, bet_std
