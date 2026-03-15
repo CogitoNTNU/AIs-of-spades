@@ -5,7 +5,12 @@ from typing import Tuple
 
 def preprocess_observation(
     observation: Observation,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
+]:
     """
     Converts a single Observation object into card and betting tensors.
 
@@ -38,4 +43,16 @@ def preprocess_observation(
     # flatten [32,4] → [128]
     bets_tensor = bets_tensor.flatten()
 
-    return card_tensor, bets_tensor
+    network_internal_state_hand = None
+    network_internal_state_game = None
+
+    if observation.is_replay:
+        network_internal_state_hand = observation.network_internal_state["hand"]
+        network_internal_state_game = observation.network_internal_state["game"]
+
+    return (
+        card_tensor,
+        bets_tensor,
+        network_internal_state_hand,
+        network_internal_state_game,
+    )

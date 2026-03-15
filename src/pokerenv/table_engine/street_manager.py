@@ -91,7 +91,9 @@ class StreetManager:
 
         return hand_is_over
 
-    def first_to_act_after_transition(self, players: list, n_players: int) -> int:
+    def first_to_act_after_transition(
+        self, players: list, n_players: int
+    ) -> int | None:
         """Returns the index of the first active non-all-in player after a street transition."""
         candidates = [
             i

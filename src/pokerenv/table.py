@@ -61,6 +61,8 @@ class Table(gym.Env):
         self.hand_number = 0
         self.hand_log = np.full((32, 4), -1.0)
 
+        self.dealer_position = 0
+
     def seed(self, seed=None):
         self.rng = np.random.default_rng(seed)
         self.street_mgr.seed(seed)
@@ -122,11 +124,23 @@ class Table(gym.Env):
         self.street_mgr.reset()
         self.hh.reset()
 
+        self.dealer_position = (self.dealer_position + 1) % self.n_players
+        for player in self.players:
+            player.position = (player.position - self.dealer_position) % self.n_players
+
+        self.next_player_i = 0 if self.n_players == 2 else 2
+        self.current_player_i = self.next_player_i
+
         initial_draw = self.street_mgr.deal_hole_cards(self.n_players)
         for i, player in enumerate(self.players):
             player.reset()
-            player.position = i
             player.cards = [initial_draw[i], initial_draw[i + self.n_players]]
+
+        MIN_STACK_TO_PLAY = 1
+        for player in self.players:
+            if player.stack < MIN_STACK_TO_PLAY:
+                player.state = PlayerState.OUT
+                self.active_players -= 1
 
         if self.hh.enabled:
             self.hh.initialize(self.players)
@@ -162,6 +176,16 @@ class Table(gym.Env):
         if self.street_finished and not self.hand_is_over:
             self._do_street_transition()
 
+        # After transition, if all active players are all-in, end the hand immediately
+        if not self.hand_is_over:
+            active_can_act = [
+                p
+                for p in self.players
+                if p.state is PlayerState.ACTIVE and not p.all_in
+            ]
+            if len(active_can_act) == 0 and self.active_players > 1:
+                self._do_street_transition(transition_to_end=True)
+
         if self.hand_is_over:
             self._end_hand()
             obs = Observation.empty()
@@ -169,7 +193,7 @@ class Table(gym.Env):
             obs = self._get_observation(self.players[self.next_player_i])
 
         rewards = np.asarray([p.get_reward() for p in sorted(self.players)])
-        return obs, rewards, self.hand_is_over, {}
+        return obs, rewards, self.hand_is_over
 
     def get_player_by_name(self, name):
         for player in self.players:
@@ -186,7 +210,7 @@ class Table(gym.Env):
             if player.position == TablePosition.SB:
                 self.pot_mgr.add(player.bet(0.5))
                 self.betting.change_bet_to_match(0.5)
-                self.hh.write("%s: posts small blind $%.2f" % (player.name, 2.5))
+                self.hh.write("%s: posts small blind $%.2f" % (player.name, BB / 2))
             elif player.position == TablePosition.BB:
                 self.pot_mgr.add(player.bet(1))
                 self.betting.change_bet_to_match(1)
@@ -375,14 +399,31 @@ class Table(gym.Env):
         self.next_player_i = min(after) if after else min(before)
         next_player = self.players[self.next_player_i]
 
-        if self.betting.last_bet_placed_by is next_player or (
-            self.first_to_act is next_player and self.betting.last_bet_placed_by is None
-        ):
-            self.street_finished = True
-            if before:
-                self.next_player_i = min(before)
+        # Only mark street finished if the next player to act has already
+        # matched the bet — i.e. they don't need to act again.
+        # If they still owe chips (bet_this_street != bet_to_match) or
+        # haven't acted yet, they must act first before the street ends.
+        next_still_needs_to_act = (
+            not next_player.acted_this_street
+            or next_player.bet_this_street != self.betting.bet_to_match
+        )
+
+        if not next_still_needs_to_act:
+            if self.betting.last_bet_placed_by is next_player or (
+                self.first_to_act is next_player
+                and self.betting.last_bet_placed_by is None
+            ):
+                self.street_finished = True
+                if before:
+                    self.next_player_i = min(before)
 
     def _do_street_transition(self, transition_to_end=False):
+        active_can_act = [
+            p for p in self.players if p.state is PlayerState.ACTIVE and not p.all_in
+        ]
+        if len(active_can_act) == 0:
+            transition_to_end = True
+
         hand_over = self.street_mgr.transition(
             self.players, self.hh.write, transition_to_end=transition_to_end
         )
@@ -400,6 +441,15 @@ class Table(gym.Env):
                 self.next_player_i = next_i
 
     def _end_hand(self):
+        # Safety net: ensure board is fully dealt before evaluation
+        # (handles any edge case where _do_street_transition wasn't enough)
+        while len(self.street_mgr.cards) < 5:
+            remaining = self.street_mgr.transition(
+                self.players, self.hh.write, transition_to_end=True
+            )
+            if remaining:
+                break
+
         # 1. Distribute pot (also calculates hand ranks internally)
         self.pot_mgr.distribute_with_cards(
             self.players, self.evaluator, self.street_mgr.cards

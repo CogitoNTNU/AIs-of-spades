@@ -1,6 +1,4 @@
 # player_agent.py
-import numpy as np
-import torch
 import torch.distributions as D
 
 from pokerenv.observation import Observation
@@ -52,9 +50,10 @@ class PlayerAgent(Player):
 
         return Action(
             action_type=PlayerAction(action_type),
-            log_p_discrete=log_p_discrete,  # tensor — kept for backward()
-            bet_amount=bet_value,  # float — used by Table
-            log_p_continuous=log_p_continuous,  # tensor — kept for backward()
+            action_tensor=d,
+            observation=observation,
+            bet_amount=bet_value,
+            bet_tensor=bet_sample,
         )
 
     def reset(self):

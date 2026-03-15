@@ -93,6 +93,18 @@ class Player:
         self.bet_this_street = 0
 
     def calculate_hand_rank(self, evaluator, community_cards):
+        # treys supports only 5, 6, or 7 cards total.
+        # If the board wasn't fully dealt (all-in before river), pad by dealing
+        # the remaining cards from a temporary deck — but the real fix is to run
+        # out the board in table.py before calling this.
+        # This guard prevents a hard crash in edge cases.
+        all_cards = self.cards + community_cards
+        if len(all_cards) < 5:
+            raise ValueError(
+                f"calculate_hand_rank called with only {len(all_cards)} cards "
+                f"(hole={len(self.cards)}, community={len(community_cards)}). "
+                "The board must be fully run out before showdown evaluation."
+            )
         self.hand_rank = evaluator.evaluate(self.cards, community_cards)
 
     def reset(self):

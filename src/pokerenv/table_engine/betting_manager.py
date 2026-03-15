@@ -49,6 +49,12 @@ class BettingManager:
             if PlayerAction.BET in valid_actions:
                 valid_actions.remove(PlayerAction.BET)
 
+        # print(
+        #     f"DEBUG betting: stack={player.stack}, bet_to_match={self.bet_to_match}, "
+        #     f"min_raise={self.minimum_raise}, min_bet={max(self.bet_to_match + self.minimum_raise, 1.0)}, "
+        #     f"others_active={len(others_active)}"
+        # )
+
         return {"actions_list": valid_actions, "bet_range": valid_bet_range}
 
     def is_action_valid(self, player, action, valid_actions: dict) -> tuple:

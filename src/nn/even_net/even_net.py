@@ -133,7 +133,9 @@ class EvenNet(PokerNet):
             raise RuntimeError("Internal state not initialized.")
 
         # extract cards and bets from the observations
-        cards, bets = preprocess_observation(observation)
+        cards, bets, network_internal_state_hand, network_internal_state_game = (
+            preprocess_observation(observation)
+        )
 
         # ensure batch dimension
         if cards.dim() == 3:
@@ -142,10 +144,24 @@ class EvenNet(PokerNet):
         if bets.dim() == 1:
             bets = bets.unsqueeze(0)
 
+        hand_state = (
+            self._hand_state
+            if network_internal_state_hand == None
+            else network_internal_state_hand
+        )
+
+        game_state = (
+            self._hand_state
+            if network_internal_state_game == None
+            else network_internal_state_game
+        )
+
+        observation.add_network_internal_state({"hand": hand_state, "game": game_state})
+
         # branches
         fa = self.cards_branch(cards)
         fb = self.bets_branch(bets)
-        fs = self.state_branch(self._hand_state, self._game_state)
+        fs = self.state_branch(hand_state, game_state)
 
         # fusion
         x = torch.cat([fa, fb, fs], dim=1)
