@@ -163,12 +163,12 @@ class LearningLoop:
         of current_model, so .backward() propagates gradients correctly.
         """
         step_losses = []
-
-        for trajectory, reward in zip(batch_trajectories, batch_rewards):
+        advantages = np.array(batch_rewards) - np.mean(batch_rewards)
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        for trajectory, advantage in zip(batch_trajectories, advantages):
             if not trajectory:
                 continue
-
-            reward_tensor = torch.tensor(reward, dtype=torch.float32)
+            reward_tensor = torch.tensor(advantage, dtype=torch.float32)
             for obs, action in trajectory:
                 action_logits, bet_mean, bet_std = self.current_model.forward(obs)
 
@@ -187,10 +187,7 @@ class LearningLoop:
             return torch.tensor(0.0, requires_grad=False)
 
         # Stack into a single tensor before summing — keeps the full graph intact
-        total_loss = torch.stack(step_losses).sum()
-
-        # Normalize by batch size to keep loss scale stable across config changes
-        total_loss = total_loss / len(batch_trajectories)
+        total_loss = torch.stack(step_losses).mean()
 
         return total_loss
 
@@ -228,7 +225,7 @@ class LearningLoop:
             "action/bet": counts[PlayerAction.BET] / total,
             "action/call": counts[PlayerAction.CALL] / total,
             "action/bet_amount": np.mean(bet_amounts) if bet_amounts else 0.0,
-            "train/avg_hands_per_trajectory": np.mean(hands_per_trajectory),
-            "train/min_hands_per_trajectory": np.min(hands_per_trajectory),
-            "train/max_hands_per_trajectory": np.max(hands_per_trajectory),
+            "game/avg_hands_per_trajectory": np.mean(hands_per_trajectory),
+            "game/min_hands_per_trajectory": np.min(hands_per_trajectory),
+            "game/max_hands_per_trajectory": np.max(hands_per_trajectory),
         }
