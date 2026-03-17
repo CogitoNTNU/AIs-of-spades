@@ -8,6 +8,13 @@ class PotManager:
     """
     Handles pot accumulation and distribution at showdown,
     including side pot logic for all-in players.
+
+    Reward semantics:
+        player.winnings represents the NET change for the hand.
+        Chips already paid into the pot are NOT deducted here —
+        they were already subtracted from player.stack when bet/called.
+        So winnings starts at 0 and only goes UP for winners.
+        Folded players keep winnings = 0 (their loss is already in the stack).
     """
 
     def __init__(self):
@@ -37,53 +44,62 @@ class PotManager:
         """
         Distributes the pot among active players after computing hand ranks.
         Handles side pots for all-in situations correctly.
+
+        Steps:
+        1. Compute hand ranks for all active (non-folded) players.
+        2. Absorb folded players' money_in_pot into the pot — their
+            winnings stay at 0 (loss already reflected in stack).
+        3. If only one active player remains, they win the whole pot.
+        4. Otherwise, peel side pots one layer at a time ordered by
+            money_in_pot (smallest first), awarding each layer to the
+            best hand among eligible players.
+
+        Stack update happens here — get_reward() is pure and does not
+        touch player.stack.
         """
-        # Calculate hand ranks for all active players
         active_players = [p for p in players if p.state is PlayerState.ACTIVE]
+
+        # Step 1 — hand ranks
         for player in active_players:
             player.calculate_hand_rank(evaluator, community_cards)
 
-        # Collect folded players' contributions and zero out their money_in_pot
-        # immediately to avoid double-subtraction in the side pot loop below
+        # Step 2 — absorb folded/out contributions into pot
         for player in players:
             if player.state is not PlayerState.ACTIVE:
                 self.pot += player.money_in_pot
-                player.winnings -= player.money_in_pot
                 player.money_in_pot = 0
 
-        # Early exit: only one active player remaining
+        # Step 3 — uncontested pot
         if len(active_players) == 1:
             winner = active_players[0]
-            winner.winnings += self.pot + winner.money_in_pot
-            winner.winnings_for_hh += self.pot + winner.money_in_pot
+            winner.stack += self.pot
+            winner.winnings += self.pot
+            winner.winnings_for_hh += self.pot
+            self.pot = 0.0
             winner.money_in_pot = 0
             return
 
-        # Side pot loop: peel off one layer at a time (handles all-in players)
-        remaining = list(active_players)
-        pot = 0.0
+        # Step 4 — side pot loop
+        remaining = sorted(active_players, key=lambda p: p.money_in_pot)
 
         while remaining:
-            min_money_in_pot = min(p.money_in_pot for p in remaining)
+            min_contribution = min(p.money_in_pot for p in remaining)
+            side_pot = min_contribution * len(remaining)
 
             for player in remaining:
-                pot += min_money_in_pot
-                player.money_in_pot -= min_money_in_pot
-                player.winnings -= min_money_in_pot
+                player.money_in_pot -= min_contribution
 
             best_rank = min(p.hand_rank for p in remaining)
             winners = [p for p in remaining if p.hand_rank == best_rank]
-            share = pot / len(winners)
+            share = side_pot / len(winners)
             for winner in winners:
+                winner.stack += share
                 winner.winnings += share
                 winner.winnings_for_hh += share
 
             remaining = [p for p in remaining if p.money_in_pot > 0]
-            pot = 0.0
 
-        # Return leftover money_in_pot to any player with uncollected chips
-        for player in active_players:
-            if player.money_in_pot > 0:
-                player.winnings += player.money_in_pot
-                player.winnings_for_hh += player.money_in_pot
-                player.money_in_pot = 0
+        self.pot = 0.0
+
+        for player in players:
+            player.money_in_pot = 0

@@ -107,6 +107,8 @@ def _observation_to_dict(obs: Observation) -> dict:
 
 
 class UIPlayer(Player):
+    is_ai = False
+
     def __init__(self, identifier: int, name: str, penalty: int = 0):
         super().__init__(identifier, name, penalty)
         self._websocket = None

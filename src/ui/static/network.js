@@ -77,7 +77,12 @@ function handle(msg) {
       handNumber++;
       document.getElementById("tb-hand").textContent =
         `${handNumber} / ${totalHands}`;
-      showHandResult(msg.rewards);
+      showHandResult(
+        msg.rewards,
+        msg.showdown || {},
+        msg.players || [],
+        msg.table_cards || [],
+      );
       disableActions();
       break;
 

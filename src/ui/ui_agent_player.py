@@ -11,9 +11,11 @@ from .ui_player import UIPlayer
 
 
 class AIPlayer(UIPlayer):
+    is_ai = True
 
     def __init__(self, seat: int, name: str, model_class, weights_path: str):
         super().__init__(seat, name)
+
         self._model = model_class()
         self._model.initialize_internal_state()
         checkpoint = torch.load(weights_path, map_location="cpu")

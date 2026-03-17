@@ -34,9 +34,7 @@ class Game:
         self.agents = [PlayerAgent(0, MAIN_CHARACTER_NAME, 0, self.current_model)]
         for n in range(1, self.active_opponents + 1):
             self.agents.append(
-                PlayerAgent(
-                    n, player_names[n], 0, self.opponents[n - 1]
-                )  
+                PlayerAgent(n, player_names[n], 0, self.opponents[n - 1])
             )
 
         self.table = Table(
@@ -83,14 +81,11 @@ class Game:
                 obs_array, rewards, done = self.table.step(action)
 
                 if done:
-                    main_character = self.table.get_player_by_name(MAIN_CHARACTER_NAME)
-                    if main_character is not None:
-                        reward = main_character.get_reward()
-                        if reward is not None:
-                            self.reward += reward
-
-                        if main_character.stack <= 0:
-                            return self.reward, self.trajectory
+                    main_reward = rewards[0]
+                    if main_reward is not None:
+                        self.reward += float(main_reward)
+                    if self.agents[0].stack <= 0:
+                        return self.reward, self.trajectory
                     break
 
                 obs = Observation(
