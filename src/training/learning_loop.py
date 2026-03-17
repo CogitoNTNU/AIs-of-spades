@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import torch
 import torch.optim as optim
@@ -88,6 +90,7 @@ class LearningLoop:
         with mp.Pool(processes=self.num_workers) as pool:
             try:
                 for epoch in range(start_epoch, epochs):
+                    start_time = time.time()
                     state_dict = {
                         k: v.cpu() for k, v in self.current_model.state_dict().items()
                     }
@@ -116,9 +119,11 @@ class LearningLoop:
 
                     avg_reward = np.mean(batch_rewards)
                     action_stats = self._compute_action_stats(batch_trajectories)
+                    end_time = time.time()
                     wandb.log(
-                        {
+                        data={
                             "epoch": epoch,
+                            "time_per_epoch": (start_time - end_time),
                             # Core training signal
                             "train/loss": loss.item() if loss.requires_grad else 0.0,
                             "train/avg_reward": avg_reward,
