@@ -54,6 +54,9 @@ class PlayerAgent(Player):
             bet_tensor=bet_sample,
         )
 
+    def new_hand(self):
+        self.nn.new_hand()
+
     def reset(self):
         super().reset()
         self.nn.initialize_internal_state()

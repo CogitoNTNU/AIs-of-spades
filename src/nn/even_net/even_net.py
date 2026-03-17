@@ -124,6 +124,10 @@ class EvenNet(PokerNet):
         self._hand_state = torch.zeros(batch_size, self.hand_state_dim, device=device)
         self._game_state = torch.zeros(batch_size, self.game_state_dim, device=device)
 
+    def new_hand(self, batch_size: int = 1):
+        device = next(self.parameters()).device
+        self._hand_state = torch.zeros(batch_size, self.hand_state_dim, device=device)
+
     def forward(
         self,
         observation: Observation,
