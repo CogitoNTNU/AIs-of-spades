@@ -57,3 +57,6 @@ major_version_zero = true
 #torch = [
 #    { index = "pytorch-rocm", marker = "sys_platform == 'linux'" },
 #]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
