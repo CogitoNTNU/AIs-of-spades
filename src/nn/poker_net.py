@@ -31,6 +31,10 @@ class PokerNet(nn.Module, ABC):
         """
         pass
 
+    @abstractmethod
+    def reset_hand(self) -> None:
+        pass
+
     # @abstractmethod
     # def signal_hand_end(self):
     #     """
