@@ -15,6 +15,7 @@ dependencies = [
     "scipy>=1.17.1",
     "gymnasium>=1.2.3",
     "wandb>=0.25.0",
+    "websockets>=16.0",
 ]
 
 
