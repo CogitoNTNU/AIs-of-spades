@@ -6,23 +6,30 @@ from nn.poker_net import PokerNet
 import wandb
 import torch.multiprocessing as mp
 
-from pokerenv.weight_manager import WeightManager
-from pokerenv.game_loop import Game
+from training.game_loop import Game
 from pokerenv.common import PlayerAction
+from training.weight_manager import WeightManager
 
 
 def _run_game(args):
-    """Runs in a separate process — no shared state."""
-    model_class, state_dict, hands_per_game, weight_manager_config = args
+    model_class, state_dict, hands_per_game, opponent_state_dicts = args
 
-    # Rebuild model from weights snapshot
     model = model_class()
     model.initialize_internal_state()
     model.load_state_dict(state_dict)
-    model.eval()  # no grad needed during rollout
+    model.eval()
+
+    opponents = []
+    for osd in opponent_state_dicts:
+        opp = model_class()
+        opp.initialize_internal_state()
+        if osd is not None:
+            opp.load_state_dict(osd)
+        opp.eval()
+        opponents.append(opp)
 
     with torch.no_grad():
-        game = Game(weight_manager_config, model)
+        game = Game(opponents, model)
         reward, trajectory = game.play(hands_per_game)
 
     return reward, trajectory
@@ -73,7 +80,7 @@ class LearningLoop:
                 self.current_model.__class__,
                 state_dict,
                 hands_per_game,
-                self.weight_manager,  # only used for opponent sampling — read-only
+                [self.weight_manager.sample_opponent_state_dict() for _ in range(5)],
             )
             for _ in range(games_per_epoch)
         ]
@@ -89,7 +96,10 @@ class LearningLoop:
                             self.current_model.__class__,
                             state_dict,
                             hands_per_game,
-                            self.weight_manager,
+                            [
+                                self.weight_manager.sample_opponent_state_dict()
+                                for _ in range(5)
+                            ],
                         )
                         for _ in range(games_per_epoch)
                     ]

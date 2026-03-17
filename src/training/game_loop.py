@@ -1,17 +1,19 @@
 import random as rn
 
-from pokerenv.player_agent import PlayerAgent
 from pokerenv.table import Table
 from pokerenv.observation import Observation
-from pokerenv.weight_manager import WeightManager
 from pokerenv.common import PlayerState
+
+from training.player_agent import PlayerAgent
+from training.weight_manager import WeightManager
 
 MAIN_CHARACTER_NAME = "UGO"
 
 
 class Game:
-    def __init__(self, weight_manager: WeightManager, current_model):
-        self.weight_manager = weight_manager
+
+    def __init__(self, opponents: list, current_model):
+        self.opponents = opponents  # list of 5 pre-built models
         self.current_model = current_model
         self.table = None
         self.agents = []
@@ -33,8 +35,8 @@ class Game:
         for n in range(1, self.active_opponents + 1):
             self.agents.append(
                 PlayerAgent(
-                    n, player_names[n], 0, self.weight_manager.sample_opponent()
-                )
+                    n, player_names[n], 0, self.opponents[n - 1]
+                )  
             )
 
         self.table = Table(
@@ -101,7 +103,7 @@ class Game:
     def _get_point_of_view(self, player, hand_log):
         if player == 0:
             return hand_log
-        hand_log = hand_log.copy()  # evita modifiche in-place
+        hand_log = hand_log.copy()
         mask = hand_log[:, 0] != -1.0
         hand_log[mask, 0] = (hand_log[mask, 0] - player) % (self.active_opponents + 1)
         return hand_log

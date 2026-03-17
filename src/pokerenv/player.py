@@ -1,8 +1,11 @@
-# player.py
+from abc import ABC, abstractmethod
+
 from pokerenv.common import PlayerState, PlayerAction
+from pokerenv.observation import Observation
+from pokerenv.action import Action
 
 
-class Player:
+class Player(ABC):
     def __init__(self, identifier, name, penalty):
         self.state = PlayerState.ACTIVE
         self.has_acted = False
@@ -120,3 +123,14 @@ class Player:
         self.pending_penalty = 0
         self.winnings = 0
         self.winnings_for_hh = 0
+
+    ########################################
+    #           Abstract Methods           #
+    ########################################
+    @abstractmethod
+    def get_action(self, observation: Observation) -> Action:
+        pass
+
+    @abstractmethod
+    def new_hand(self, observation: Observation) -> Action:
+        pass

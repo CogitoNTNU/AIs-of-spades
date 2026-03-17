@@ -92,3 +92,21 @@ class WeightManager:
             raise ValueError(f"Unknown sampling mode: {self.sampling_mode}")
 
         return self.load(chosen_file)
+    
+    def sample_opponent_state_dict(self) -> dict | None:
+        """Returns a raw state_dict (picklable) instead of a live model."""
+        if not self.snapshots:
+            return None  # caller handles random init
+
+        if self.sampling_mode == "uniform":
+            chosen = random.choice(self.snapshots)
+        elif self.sampling_mode == "linear":
+            weights = list(range(1, len(self.snapshots) + 1))
+            chosen = random.choices(self.snapshots, weights=weights, k=1)[0]
+        elif self.sampling_mode == "exponential":
+            weights = [2**i for i in range(len(self.snapshots))]
+            chosen = random.choices(self.snapshots, weights=weights, k=1)[0]
+        else:
+            raise ValueError(f"Unknown sampling mode: {self.sampling_mode}")
+
+        return chosen["state_dict"]["model_state_dict"]
