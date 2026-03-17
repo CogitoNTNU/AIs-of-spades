@@ -54,6 +54,8 @@ class Game:
             raise Exception("Table should not be None")
 
         for hand_index in range(total_hands):
+            for agent in self.agents:
+                agent.new_hand()
             obs_array = self.table.reset_hand()
             obs = Observation(
                 obs_array, self._get_point_of_view(obs_array[0], self.table.hand_log)

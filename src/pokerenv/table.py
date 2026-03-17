@@ -188,7 +188,7 @@ class Table(gym.Env):
 
         if self.hand_is_over:
             self._end_hand()
-            obs = Observation.empty()
+            obs = np.zeros(59, dtype=np.float32)
         else:
             obs = self._get_observation(self.players[self.next_player_i])
 
