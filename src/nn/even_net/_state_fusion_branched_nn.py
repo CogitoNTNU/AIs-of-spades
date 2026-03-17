@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-
 class StateFusionBranchedNN(nn.Module):
     """
     Neural network for fusing hand and game states using separate branches.
@@ -15,8 +14,8 @@ class StateFusionBranchedNN(nn.Module):
         self,
         hand_in_dim: int,
         game_in_dim: int,
-        hidden_dim: int = 128,
-        out_dim: int = 128,
+        hidden_dim: int = 64,
+        out_dim: int = 32,
     ) -> None:
         """
         Initializes the StateFusionBranchedNN.
@@ -24,63 +23,28 @@ class StateFusionBranchedNN(nn.Module):
         Args:
             hand_in_dim (int): Dimension of the input hand state.
             game_in_dim (int): Dimension of the input game state.
-            hidden_dim (int): Base dimension of the hidden layers.
+            hidden_dim (int): Dimension of the hidden layers.
             out_dim (int): Dimension of the output vector.
         """
         super().__init__()
-
-        # Hand branch (deeper feature extractor)
         self.hand_branch = nn.Sequential(
             nn.Linear(hand_in_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=0.2),
-            nn.Linear(hidden_dim, hidden_dim * 2),
-            nn.BatchNorm1d(hidden_dim * 2),
-            nn.ReLU(),
-            nn.Dropout(p=0.25),
-            nn.Linear(hidden_dim * 2, hidden_dim * 2),
-            nn.BatchNorm1d(hidden_dim * 2),
-            nn.ReLU(),
-            nn.Dropout(p=0.3),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
         )
 
-        # Game branch (mirrors hand branch)
         self.game_branch = nn.Sequential(
             nn.Linear(game_in_dim, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=0.2),
-            nn.Linear(hidden_dim, hidden_dim * 2),
-            nn.BatchNorm1d(hidden_dim * 2),
-            nn.ReLU(),
-            nn.Dropout(p=0.25),
-            nn.Linear(hidden_dim * 2, hidden_dim * 2),
-            nn.BatchNorm1d(hidden_dim * 2),
-            nn.ReLU(),
-            nn.Dropout(p=0.3),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
         )
 
-        # Fusion network (deeper head)
         self.net = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim * 2),
-            nn.BatchNorm1d(hidden_dim * 2),
+            nn.Linear(hidden_dim + hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(p=0.3),
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.BatchNorm1d(hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=0.25),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, out_dim),
-            nn.ReLU(),
+            nn.Linear(hidden_dim, out_dim),
         )
 
     def forward(self, hand: torch.Tensor, game: torch.Tensor) -> torch.Tensor:
