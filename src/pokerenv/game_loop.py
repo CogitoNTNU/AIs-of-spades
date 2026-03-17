@@ -59,6 +59,9 @@ class Game:
                 obs_array, self._get_point_of_view(obs_array[0], self.table.hand_log)
             )
 
+            for player in self.agents:
+                player.new_hand()
+
             while True:
                 acting_player_i = int(obs.player_identifier)
 
