@@ -1,7 +1,7 @@
 import os
 import wandb
-from pokerenv.learning_loop import LearningLoop
-from pokerenv.weight_manager import WeightManager
+from training.learning_loop import LearningLoop
+from training.weight_manager import WeightManager
 from nn import EvenNet
 import yaml
 

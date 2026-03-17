@@ -1,6 +1,6 @@
 # test_player.py
 from pokerenv.player import Player
-from pokerenv.common import PlayerAction
+from training.common import PlayerAction
 from pokerenv.action import Action
 from pokerenv.observation import Observation
 import torch

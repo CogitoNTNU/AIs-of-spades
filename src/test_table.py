@@ -2,7 +2,7 @@
 from pokerenv.table import Table
 from test_player import TestPlayerAgent
 from pokerenv.observation import Observation
-from pokerenv.common import GameState
+from training.common import GameState
 from pokerenv.action import Action
 from treys import Card
 
