@@ -5,6 +5,7 @@ import gymnasium as gym
 from treys import Evaluator, Card
 from pokerenv.common import PlayerState, PlayerAction, TablePosition
 from pokerenv.action import Action
+from pokerenv.observation import Observation
 from pokerenv.table_engine import (
     BettingManager,
     PotManager,
@@ -187,7 +188,7 @@ class Table(gym.Env):
 
         if self.hand_is_over:
             self._end_hand()
-            obs = np.zeros(59, dtype=np.float32)
+            obs = Observation.empty()
         else:
             obs = self._get_observation(self.players[self.next_player_i])
 
