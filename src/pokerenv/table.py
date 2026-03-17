@@ -62,6 +62,7 @@ class Table(gym.Env):
         self.hand_log = np.full((32, 4), -1.0)
 
         self.dealer_position = 0
+        self.showdown_cards: dict = {}
 
     def seed(self, seed=None):
         self.rng = np.random.default_rng(seed)
@@ -113,8 +114,6 @@ class Table(gym.Env):
         """Resets only cards and pot"""
         self.current_turn = 0
         self.active_players = self.n_players
-        self.next_player_i = 0 if self.n_players == 2 else 2
-        self.current_player_i = self.next_player_i
         self.first_to_act = None
         self.street_finished = False
         self.hand_is_over = False
@@ -124,12 +123,28 @@ class Table(gym.Env):
         self.street_mgr.reset()
         self.hh.reset()
 
+        self.hand_log = np.full((32, 4), -1.0)
+        self.hand_number = 0
+
+        # Rotate dealer
         self.dealer_position = (self.dealer_position + 1) % self.n_players
         for player in self.players:
             player.position = (player.position - self.dealer_position) % self.n_players
 
-        self.next_player_i = 0 if self.n_players == 2 else 2
-        self.current_player_i = self.next_player_i
+        # Find who acts first preflop
+        if self.n_players == 2:
+            # Heads-up: SB (dealer) acts first preflop
+            first_i = next(
+                i for i, p in enumerate(self.players) if p.position == TablePosition.SB
+            )
+        else:
+            # 3+ players: UTG (position 2) acts first preflop
+            first_i = next(
+                (i for i, p in enumerate(self.players) if p.position == 2),
+                2,
+            )
+        self.next_player_i = first_i
+        self.current_player_i = first_i
 
         initial_draw = self.street_mgr.deal_hole_cards(self.n_players)
         for i, player in enumerate(self.players):
@@ -207,15 +222,27 @@ class Table(gym.Env):
 
     def _post_blinds(self):
         for player in self.players:
+            if player.state is PlayerState.OUT:
+                continue  # ← salta chi è fuori
+
             if player.position == TablePosition.SB:
-                self.pot_mgr.add(player.bet(0.5))
-                self.betting.change_bet_to_match(0.5)
-                self.hh.write("%s: posts small blind $%.2f" % (player.name, BB / 2))
+                amount = min(0.5, player.stack)  # ← non scalare più dello stack
+                if amount > 0:
+                    self.pot_mgr.add(player.bet(amount))
+                    self.betting.change_bet_to_match(amount)
+                    self.hh.write(
+                        "%s: posts small blind $%.2f" % (player.name, amount * BB)
+                    )
+
             elif player.position == TablePosition.BB:
-                self.pot_mgr.add(player.bet(1))
-                self.betting.change_bet_to_match(1)
-                self.betting.last_bet_placed_by = player
-                self.hh.write("%s: posts big blind $%.2f" % (player.name, BB))
+                amount = min(1, player.stack)  # ← non scalare più dello stack
+                if amount > 0:
+                    self.pot_mgr.add(player.bet(amount))
+                    self.betting.change_bet_to_match(amount)
+                    self.betting.last_bet_placed_by = player
+                    self.hh.write(
+                        "%s: posts big blind $%.2f" % (player.name, amount * BB)
+                    )
 
     def _apply_action(self, player, action: Action):
         valid_actions = self.betting.get_valid_actions(player, self.players)
@@ -353,27 +380,44 @@ class Table(gym.Env):
 
         if len(players_with_actions) < 2 and len(players_who_should_act) == 0:
             if self.active_players > 1:
-                biggest_call = max(
-                    (
-                        p.bet_this_street
-                        for p in self.players
-                        if p.state is PlayerState.ACTIVE
-                        and p is not self.betting.last_bet_placed_by
-                    ),
-                    default=0.0,
-                )
-                last_bet = (
-                    self.betting.last_bet_placed_by.bet_this_street
-                    if self.betting.last_bet_placed_by
-                    else 0.0
-                )
-                uncalled = max(last_bet - biggest_call, 0.0)
+                # Calcola la parte non chiamata della puntata più alta
+                all_active = [p for p in self.players if p.state is PlayerState.ACTIVE]
+                if self.betting.last_bet_placed_by is not None:
+                    biggest_other = max(
+                        (
+                            p.bet_this_street
+                            for p in all_active
+                            if p is not self.betting.last_bet_placed_by
+                        ),
+                        default=0.0,
+                    )
+                    last_bet = self.betting.last_bet_placed_by.bet_this_street
+                    uncalled = max(last_bet - biggest_other, 0.0)
+                else:
+                    uncalled = 0.0
+
                 self.pot_mgr.return_uncalled_bet(
                     self.betting.last_bet_placed_by, uncalled, self.hh.write
                 )
                 self._do_street_transition(transition_to_end=True)
             else:
-                uncalled = self.betting.minimum_raise
+                # Un solo giocatore rimasto — restituisci tutto il pot
+                if self.betting.last_bet_placed_by is not None:
+                    all_others = [
+                        p
+                        for p in self.players
+                        if p is not self.betting.last_bet_placed_by
+                        and p.state is not PlayerState.OUT
+                    ]
+                    biggest_other = max(
+                        (p.bet_this_street for p in all_others),
+                        default=0.0,
+                    )
+                    last_bet = self.betting.last_bet_placed_by.bet_this_street
+                    uncalled = max(last_bet - biggest_other, 0.0)
+                else:
+                    uncalled = 0.0
+
                 self.pot_mgr.return_uncalled_bet(
                     self.betting.last_bet_placed_by, uncalled, self.hh.write
                 )
@@ -443,6 +487,12 @@ class Table(gym.Env):
     def _end_hand(self):
         # Safety net: ensure board is fully dealt before evaluation
         # (handles any edge case where _do_street_transition wasn't enough)
+        self.showdown_cards = {
+            p.name: p.cards
+            for p in self.players
+            if p.state is not PlayerState.FOLDED and p.state is not PlayerState.OUT
+        }
+
         while len(self.street_mgr.cards) < 5:
             remaining = self.street_mgr.transition(
                 self.players, self.hh.write, transition_to_end=True

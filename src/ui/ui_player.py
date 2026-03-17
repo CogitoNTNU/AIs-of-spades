@@ -71,15 +71,16 @@ def _observation_to_dict(obs: Observation) -> dict:
         "pot": float(obs.pot),
         "bet_to_match": float(obs.bet_to_match),
         "minimum_raise": float(obs.minimum_raise),
+        # Never filter hand cards — always 2 real cards, rank 0 = valid Two.
+        # For table cards filter empty slots: undealt slots have suit bitmask 0
+        # which CardObservation stores as log2(0)→0 AND rank 0 together.
         "hand_cards": [
-            {"suit": int(c.suit), "rank": int(c.rank)}
-            for c in obs.hand_cards.cards
-            if int(c.rank) > 0
+            {"suit": int(c.suit), "rank": int(c.rank)} for c in obs.hand_cards.cards
         ],
         "table_cards": [
             {"suit": int(c.suit), "rank": int(c.rank)}
             for c in obs.table_cards.cards
-            if int(c.rank) > 0
+            if not (int(c.suit) == 0 and int(c.rank) == 0)
         ],
         "actions": {
             "check": can_check,

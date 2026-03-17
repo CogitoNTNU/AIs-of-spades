@@ -1,15 +1,3 @@
-"""
-ui_table_manager.py  (fixed)
-
-Key fixes vs original:
-  1. _run_game loop no longer breaks on non-acting player — it advances properly.
-  2. observation-to-dict uses correct check detection (bet_to_match == 0 or
-     bet_this_street >= bet_to_match, i.e. no extra chips owed).
-  3. Broadcasts hand-result with per-player winnings from table rewards array.
-  4. Sends table_update + your_turn separately so spectators still see the table.
-  5. Streets enum aligned with GameState (0=preflop … 3=river).
-"""
-
 import asyncio
 import json
 import logging
@@ -20,6 +8,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, Optional
 
 import websockets
+import math
+from treys import Card as TreysCard
 
 from pokerenv.table import Table
 from pokerenv.observation import Observation
@@ -271,6 +261,8 @@ class UITableManager:
             self._broadcast_sync(_build_table_update(obs))
             # tell everyone whose turn it is
             self._broadcast_sync(_build_turn_indicator(obs, agents))
+            # send each player their own hole cards + stack immediately
+            self._broadcast_player_states(agents)
 
             while True:
                 acting_seat = int(obs.player_identifier)
@@ -300,15 +292,26 @@ class UITableManager:
                 obs_array, rewards, done = table.step(action)
 
                 if done:
-                    # rewards is a numpy array indexed by player identifier
+                    showdown = {}
+                    for player_name, cards in table.showdown_cards.items():
+                        hand = []
+                        for c in cards:
+                            suit_bitmask = TreysCard.get_suit_int(c)
+                            rank_idx     = TreysCard.get_rank_int(c)
+                            suit_idx     = int(math.log2(suit_bitmask)) if suit_bitmask > 0 else 0
+                            hand.append({"suit": suit_idx, "rank": rank_idx})
+                        showdown[player_name] = hand
+
                     reward_dict = {
                         agents[i].name: float(rewards[i])
                         for i in range(n)
                         if rewards[i] is not None
                     }
-                    self._broadcast_sync(
-                        {"type": "hand_result", "rewards": reward_dict}
-                    )
+                    self._broadcast_sync({
+                        "type": "hand_result",
+                        "rewards": reward_dict,
+                        "showdown": showdown,   # ← nuovo campo
+                    })
                     break
 
                 obs = Observation(obs_array, table.hand_log)
@@ -336,6 +339,34 @@ class UITableManager:
         asyncio.run_coroutine_threadsafe(
             _safe_send(player._websocket, payload), self._loop
         )
+
+    def _broadcast_player_states(self, agents):
+        """After reset_hand, push each player their own hole cards and stack."""
+        import math
+        from treys import Card as TreysCard
+
+        for seat, player in self.players.items():
+            if not player.is_connected or seat >= len(agents):
+                continue
+            agent = agents[seat]
+            # Convert treys card ints → {suit, rank} using same encoding as
+            # CardObservation: suit = log2(bitmask), rank = get_rank_int()
+            hand = []
+            for c in agent.cards:
+                suit_bitmask = TreysCard.get_suit_int(c)
+                rank_idx = TreysCard.get_rank_int(c)
+                suit_idx = int(math.log2(suit_bitmask)) if suit_bitmask > 0 else 0
+                hand.append({"suit": suit_idx, "rank": rank_idx})
+            payload = json.dumps(
+                {
+                    "type": "player_state",
+                    "stack": float(agent.stack),
+                    "hand_cards": hand,
+                }
+            )
+            asyncio.run_coroutine_threadsafe(
+                _safe_send(player._websocket, payload), self._loop
+            )
 
     # ------------------------------------------------------------------
     # Broadcast helpers
