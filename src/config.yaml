@@ -6,11 +6,11 @@ weight_manager:
   sampling_mode: "linear"   # "uniform" or "linear" or "exponential"
 
 learning_loop:
-  learning_rate: 1e-3
+  learning_rate: 1e-3        
   epochs: 10000
-  games_per_epoch: 32   # batch size for training
+  games_per_epoch: 32
   hands_per_game: 100
-  save_interval: 100    # save a checkpoint in case of crash
-  save_every: 20        # save a model every N epochs
+  save_interval: 100
+  save_every: 20
   checkpoint_dir: "res/checkpoint"
-  num_workers: 8 
+  num_workers: 8             

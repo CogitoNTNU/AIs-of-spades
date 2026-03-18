@@ -4,6 +4,7 @@
 #SBATCH --time=04:00:00
 #SBATCH --partition=GPUQ
 #SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=14       
 #SBATCH --mem=32GB
 #SBATCH --nodes=1
 #SBATCH --output=slurm_outputs/output_combined.txt
@@ -17,9 +18,8 @@ echo "Running from this directory: $SLURM_SUBMIT_DIR"
 echo "Name of job: $SLURM_JOB_NAME"
 echo "ID of job: $SLURM_JOB_ID"
 echo "The job was run on these nodes: $SLURM_JOB_NODELIST"
+echo "CPUs allocated: $SLURM_CPUS_PER_TASK"    
 
-uv run python src/main.py
+uv run python src/main.py --num-workers $SLURM_CPUS_PER_TASK
 
 echo "Job finished"
-
-# "sbatch ./training.slurm"  to run the job
