@@ -1,15 +1,3 @@
-"""
-ui_table_manager.py  (fixed)
-
-Key fixes vs original:
-  1. _run_game loop no longer breaks on non-acting player — it advances properly.
-  2. observation-to-dict uses correct check detection (bet_to_match == 0 or
-     bet_this_street >= bet_to_match, i.e. no extra chips owed).
-  3. Broadcasts hand-result with per-player winnings from table rewards array.
-  4. Sends table_update + your_turn separately so spectators still see the table.
-  5. Streets enum aligned with GameState (0=preflop … 3=river).
-"""
-
 import asyncio
 import json
 import logging
@@ -20,10 +8,16 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, Optional
 
 import websockets
+import torch
+import math
+from treys import Card as TreysCard
+import numpy as np
+
 
 from pokerenv.table import Table
 from pokerenv.observation import Observation
-from pokerenv.common import PlayerState
+from pokerenv.common import PlayerState, PlayerAction
+from pokerenv.action import Action
 
 from .ui_player import UIPlayer, _observation_to_dict
 from .html_client import _HTML_TEMPLATE
@@ -96,6 +90,7 @@ class UITableManager:
         self._game_lock = threading.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._game_running: bool = False
+        self._hand_ack_events: Dict[int, threading.Event] = {}
 
     # ------------------------------------------------------------------
     # Public entry-point
@@ -186,6 +181,10 @@ class UITableManager:
                     msg["_observation"] = obs
                     self.players[seat].receive_action_from_client(msg)
 
+                elif mtype == "hand_ack" and seat is not None:
+                    event = self._hand_ack_events.get(seat)
+                    if event:
+                        event.set()
         except websockets.exceptions.ConnectionClosed:
             log.info("Seat %s disconnected", seat)
         finally:
@@ -267,56 +266,129 @@ class UITableManager:
             obs_array = table.reset_hand()
             obs = Observation(obs_array, table.hand_log)
 
-            # broadcast initial table state to everyone
             self._broadcast_sync(_build_table_update(obs))
-            # tell everyone whose turn it is
             self._broadcast_sync(_build_turn_indicator(obs, agents))
+            self._broadcast_player_states(agents)
+
+            rewards = np.zeros(n)
 
             while True:
                 acting_seat = int(obs.player_identifier)
 
-                # Guard: seat index out of range
                 if acting_seat >= n:
-                    log.warning("player_identifier %d out of range", acting_seat)
+                    log.warning(
+                        "player_identifier %d out of range — ending hand", acting_seat
+                    )
                     break
 
                 acting_agent = agents[acting_seat]
 
-                # Skip players who can't act (folded / all-in / out)
-                # The table should never ask them, but be safe.
                 if acting_agent.state is not PlayerState.ACTIVE or acting_agent.all_in:
-                    log.warning("Table asked inactive player %d to act", acting_seat)
+                    # Il tavolo è in uno stato dove non c'è nessuno che può agire.
+                    # Forziamo la fine della mano chiamando _end_hand direttamente.
+                    log.warning(
+                        "Table asked inactive player %d — forcing _end_hand",
+                        acting_seat,
+                    )
+                    table.hand_is_over = True
+                    table._end_hand()
+                    rewards = np.asarray([p.get_reward() for p in sorted(agents)])
                     break
 
-                # Store last obs for reconnect / action routing
                 self._last_obs[acting_seat] = obs
-
-                # Push your_turn only to the acting player
                 self._push_your_turn(acting_seat, obs)
-
-                # Blocking call — auto-folds on disconnect
                 action = acting_agent.get_action(obs)
-
                 obs_array, rewards, done = table.step(action)
 
                 if done:
-                    # rewards is a numpy array indexed by player identifier
-                    reward_dict = {
-                        agents[i].name: float(rewards[i])
-                        for i in range(n)
-                        if rewards[i] is not None
-                    }
-                    self._broadcast_sync(
-                        {"type": "hand_result", "rewards": reward_dict}
-                    )
                     break
 
                 obs = Observation(obs_array, table.hand_log)
                 self._broadcast_sync(_build_table_update(obs))
                 self._broadcast_sync(_build_turn_indicator(obs, agents))
 
+            # Broadcast board finale con community cards complete
+            community = []
+            for c in table.street_mgr.cards:
+                suit_bitmask = TreysCard.get_suit_int(c)
+                rank_idx = TreysCard.get_rank_int(c)
+                suit_idx = int(math.log2(suit_bitmask)) if suit_bitmask > 0 else 0
+                community.append({"suit": suit_idx, "rank": rank_idx})
+
+            self._broadcast_sync(
+                {
+                    "type": "table_update",
+                    "street": int(table.street_mgr.street),
+                    "pot": float(table.pot_mgr.pot),
+                    "bet_to_match": 0.0,
+                    "table_cards": community,
+                    "others": [
+                        {
+                            "position": int(agents[i].position),
+                            "state": agents[i].state.value,
+                            "stack": float(agents[i].stack),
+                            "money_in_pot": float(agents[i].money_in_pot),
+                            "bet_this_street": float(agents[i].bet_this_street),
+                            "is_all_in": bool(agents[i].all_in),
+                        }
+                        for i in range(n)
+                    ],
+                }
+            )
+
+            # Converti le carte dello showdown
+            showdown = {}
+            for player_name, cards in table.showdown_cards.items():
+                hand = []
+                for c in cards:
+                    suit_bitmask = TreysCard.get_suit_int(c)
+                    rank_idx = TreysCard.get_rank_int(c)
+                    suit_idx = int(math.log2(suit_bitmask)) if suit_bitmask > 0 else 0
+                    hand.append({"suit": suit_idx, "rank": rank_idx})
+                showdown[player_name] = hand
+
+            # Stato reale dei giocatori dagli agenti
+            final_players = [
+                {
+                    "name": agents[i].name,
+                    "seat": i,
+                    "stack": float(agents[i].stack),
+                    "state": agents[i].state.value,
+                    "money_in_pot": float(agents[i].money_in_pot),
+                    "bet_this_street": float(agents[i].bet_this_street),
+                    "is_all_in": bool(agents[i].all_in),
+                }
+                for i in range(n)
+            ]
+
+            reward_dict = {
+                agents[i].name: float(rewards[i])
+                for i in range(n)
+                if rewards[i] is not None
+            }
+
+            self._broadcast_sync(
+                {
+                    "type": "hand_result",
+                    "rewards": reward_dict,
+                    "showdown": showdown,
+                    "players": final_players,
+                    "table_cards": community,
+                }
+            )
+
+            self._wait_for_hand_ack()
+
         final_stacks = {a.name: float(a.stack) for a in agents}
-        self._broadcast_sync({"type": "game_over", "final_stacks": final_stacks})
+        self._broadcast_sync(
+            {
+                "type": "hand_result",
+                "rewards": reward_dict,
+                "showdown": showdown,
+                "players": final_players,
+                "table_cards": community,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Push helpers
@@ -336,6 +408,32 @@ class UITableManager:
         asyncio.run_coroutine_threadsafe(
             _safe_send(player._websocket, payload), self._loop
         )
+
+    def _broadcast_player_states(self, agents):
+        """After reset_hand, push each player their own hole cards and stack."""
+
+        for seat, player in self.players.items():
+            if not player.is_connected or seat >= len(agents):
+                continue
+            agent = agents[seat]
+            # Convert treys card ints → {suit, rank} using same encoding as
+            # CardObservation: suit = log2(bitmask), rank = get_rank_int()
+            hand = []
+            for c in agent.cards:
+                suit_bitmask = TreysCard.get_suit_int(c)
+                rank_idx = TreysCard.get_rank_int(c)
+                suit_idx = int(math.log2(suit_bitmask)) if suit_bitmask > 0 else 0
+                hand.append({"suit": suit_idx, "rank": rank_idx})
+            payload = json.dumps(
+                {
+                    "type": "player_state",
+                    "stack": float(agent.stack),
+                    "hand_cards": hand,
+                }
+            )
+            asyncio.run_coroutine_threadsafe(
+                _safe_send(player._websocket, payload), self._loop
+            )
 
     # ------------------------------------------------------------------
     # Broadcast helpers
@@ -372,6 +470,27 @@ class UITableManager:
         t = threading.Thread(target=_run, daemon=True)
         t.start()
         time.sleep(0.3)
+
+    def _wait_for_hand_ack(self):
+        human_seats = [
+            seat
+            for seat, player in self.players.items()
+            if not player.is_ai and player.is_connected
+        ]
+        if not human_seats:
+            return
+
+        events = {}
+        for seat in human_seats:
+            e = threading.Event()
+            self._hand_ack_events[seat] = e
+            events[seat] = e
+
+        for e in events.values():
+            e.wait(timeout=60)
+
+        for seat in human_seats:
+            self._hand_ack_events.pop(seat, None)
 
 
 # ---------------------------------------------------------------------------

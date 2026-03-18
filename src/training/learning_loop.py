@@ -123,7 +123,7 @@ class LearningLoop:
                     wandb.log(
                         data={
                             "epoch": epoch,
-                            "time_per_epoch": (start_time - end_time),
+                            "time_per_epoch": (end_time - start_time),
                             # Core training signal
                             "train/loss": loss.item() if loss.requires_grad else 0.0,
                             "train/avg_reward": avg_reward,

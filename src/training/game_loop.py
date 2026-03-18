@@ -1,4 +1,5 @@
 import random as rn
+import numpy as np
 
 from pokerenv.table import Table
 from pokerenv.observation import Observation
@@ -34,9 +35,7 @@ class Game:
         self.agents = [PlayerAgent(0, MAIN_CHARACTER_NAME, 0, self.current_model)]
         for n in range(1, self.active_opponents + 1):
             self.agents.append(
-                PlayerAgent(
-                    n, player_names[n], 0, self.opponents[n - 1]
-                )  
+                PlayerAgent(n, player_names[n], 0, self.opponents[n - 1])
             )
 
         self.table = Table(
@@ -58,10 +57,14 @@ class Game:
         for hand_index in range(total_hands):
             for agent in self.agents:
                 agent.new_hand()
+
             obs_array = self.table.reset_hand()
             obs = Observation(
-                obs_array, self._get_point_of_view(obs_array[0], self.table.hand_log)
+                obs_array,
+                self._get_point_of_view(obs_array[0], self.table.hand_log),
             )
+
+            rewards = np.zeros(len(self.agents))
 
             while True:
                 acting_player_i = int(obs.player_identifier)
@@ -71,8 +74,15 @@ class Game:
                         "player_identifier %d is out of range (agents: %d)"
                         % (acting_player_i, len(self.agents))
                     )
+
                 acting_agent = self.agents[acting_player_i]
+
                 if acting_agent.state != PlayerState.ACTIVE or acting_agent.all_in:
+                    # Il tavolo ha dato il turno a un giocatore inattivo —
+                    # forziamo _end_hand come nella UI
+                    self.table.hand_is_over = True
+                    self.table._end_hand()
+                    rewards = np.asarray([p.get_reward() for p in sorted(self.agents)])
                     break
 
                 action = acting_agent.get_action(obs)
@@ -83,20 +93,19 @@ class Game:
                 obs_array, rewards, done = self.table.step(action)
 
                 if done:
-                    main_character = self.table.get_player_by_name(MAIN_CHARACTER_NAME)
-                    if main_character is not None:
-                        reward = main_character.get_reward()
-                        if reward is not None:
-                            self.reward += reward
-
-                        if main_character.stack <= 0:
-                            return self.reward, self.trajectory
                     break
 
                 obs = Observation(
                     obs_array,
                     self._get_point_of_view(obs_array[0], self.table.hand_log),
                 )
+
+            main_reward = rewards[0]
+            if main_reward is not None:
+                self.reward += float(main_reward)
+
+            if self.agents[0].stack <= 0:
+                return self.reward, self.trajectory
 
         return self.reward, self.trajectory
 

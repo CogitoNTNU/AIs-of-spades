@@ -72,8 +72,8 @@ class Observation:
         self.minimum_raise = obs_matrix[28]
 
         self.others = [
-            OtherPlayerObservation(obs_matrix[29 + i : 29 + i + 6])
-            for i in range(0, (len(obs_matrix) - 29) // 6, 6)
+            OtherPlayerObservation(obs_matrix[29 + i * 6 : 29 + i * 6 + 6])
+            for i in range((len(obs_matrix) - 29) // 6)
         ]
         self.hand_log = hand_log
         self.is_replay = False
