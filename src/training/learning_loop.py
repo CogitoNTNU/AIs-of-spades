@@ -55,7 +55,7 @@ class LearningLoop:
 
         self.optimizer = optim.Adam(
             self.current_model.parameters(),
-            lr=self.config.get("learning_rate", 1e-4),
+            lr=float(self.config.get("learning_rate", 1e-4)),
         )
 
         # Resolved in start_learning(); stored as an attribute so helper methods
