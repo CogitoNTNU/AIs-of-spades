@@ -59,4 +59,3 @@ class PlayerAgent(Player):
 
     def reset(self):
         super().reset()
-        self.nn.initialize_internal_state()

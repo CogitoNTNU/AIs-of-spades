@@ -373,6 +373,7 @@ class UITableManager:
                     "rewards": reward_dict,
                     "showdown": showdown,
                     "players": final_players,
+                    "table_cards": community,
                 }
             )
 
@@ -385,7 +386,7 @@ class UITableManager:
                 "rewards": reward_dict,
                 "showdown": showdown,
                 "players": final_players,
-                "table_cards": community,  
+                "table_cards": community,
             }
         )
 

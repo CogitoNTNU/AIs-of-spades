@@ -75,6 +75,7 @@ function handle(msg) {
 
     case "hand_result":
       handNumber++;
+      console.log("hand_result:", JSON.stringify(msg)); // ← aggiungi temporaneamente
       document.getElementById("tb-hand").textContent =
         `${handNumber} / ${totalHands}`;
       showHandResult(
@@ -85,7 +86,7 @@ function handle(msg) {
       );
       disableActions();
       break;
-
+      
     case "game_over":
       showGameOver(msg.final_stacks);
       break;

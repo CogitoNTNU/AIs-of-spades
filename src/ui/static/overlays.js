@@ -9,19 +9,24 @@ function showHandResult(rewards, showdown, players, tableCards) {
   document.getElementById("result-street").textContent =
     `Hand ${handNumber} of ${totalHands}`;
 
-  // Community cards in cima
-  const communityHTML =
-    tableCards && tableCards.length
-      ? `<div style="margin-bottom:16px;">
-        <div style="font-family:'DM Mono',monospace;font-size:.6rem;letter-spacing:3px;color:var(--text-muted);text-transform:uppercase;margin-bottom:8px;">Board</div>
-        <div style="display:flex;gap:6px;justify-content:center;">
+  let html = "";
+
+  // ── Board ──
+  if (tableCards && tableCards.length) {
+    html += `
+      <div style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--felt-rim);">
+        <div style="font-family:'DM Mono',monospace;font-size:.58rem;letter-spacing:4px;
+                    color:var(--text-muted);text-transform:uppercase;margin-bottom:10px;">
+          Board
+        </div>
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
           ${tableCards.map((c) => cardHTML(c)).join("")}
         </div>
-      </div>`
-      : "";
+      </div>`;
+  }
 
-  // Righe per ogni giocatore
-  const playersHTML = entries
+  // ── Players ──
+  html += entries
     .map(([name, delta]) => {
       const cls = delta > 0 ? "pos" : delta < 0 ? "neg" : "zero";
       const sign = delta > 0 ? "+" : "";
@@ -29,28 +34,32 @@ function showHandResult(rewards, showdown, players, tableCards) {
       const playerInfo = players && players.find((p) => p.name === name);
 
       const cardsHTML = cards
-        ? cards.map((c) => cardHTML(c)).join("")
-        : "<span style=\"color:var(--text-muted);font-family:'DM Mono',monospace;font-size:.7rem;padding:4px 8px;\">folded</span>";
+        ? `<div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:8px;">
+           ${cards.map((c) => cardHTML(c)).join("")}
+         </div>`
+        : `<div style="margin-top:6px;font-family:'DM Mono',monospace;font-size:.65rem;
+                     color:var(--text-muted);text-align:center;">folded</div>`;
 
       const stackHTML = playerInfo
-        ? `<span style="font-family:'DM Mono',monospace;font-size:.65rem;color:var(--text-muted);">stack: ${fmt(playerInfo.stack)}</span>`
+        ? `<div style="font-family:'DM Mono',monospace;font-size:.62rem;color:var(--text-muted);
+                     margin-top:2px;">stack: ${fmt(playerInfo.stack)}</div>`
         : "";
 
-      return `<div class="result-row" style="flex-direction:column;align-items:stretch;gap:8px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div class="result-name">${esc(name)}</div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;">
+      return `
+      <div class="result-row" style="flex-direction:column;align-items:stretch;gap:4px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div class="result-name">${esc(name)}</div>
+            ${stackHTML}
+          </div>
           <div class="result-delta ${cls}">${sign}${delta.toFixed(1)}</div>
-          ${stackHTML}
         </div>
-      </div>
-      <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;">${cardsHTML}</div>
-    </div>`;
+        ${cardsHTML}
+      </div>`;
     })
     .join("");
 
-  document.getElementById("result-list").innerHTML =
-    communityHTML + playersHTML;
+  document.getElementById("result-list").innerHTML = html;
   document.getElementById("result-overlay").classList.add("show");
 
   const parts = entries
