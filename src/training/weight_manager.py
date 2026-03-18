@@ -15,6 +15,7 @@ class WeightManager:
         self.snapshots = []
         self.cache = {}
 
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
         os.makedirs(self.models_dir, exist_ok=True)
 
     def save(self, model, optimizer, epoch: int):  # aggiungi optimizer
