@@ -166,14 +166,17 @@ function renderSeatsGrid(seated, needed) {
 
 /** Apply a table_update message (community cards, pot, others). */
 function applyTableUpdate(msg) {
+  const streetCards = { 0: 0, 1: 3, 2: 4, 3: 5 };
+  const nCards = streetCards[msg.street] ?? 0;
+
   show("screen-game");
   document.getElementById("pot-value").textContent = fmt(msg.pot);
   document.getElementById("to-call-value").textContent = fmt(msg.bet_to_match);
   document.getElementById("street-name").textContent =
     STREETS[msg.street] ?? "—";
-  renderCommunityCards(msg.table_cards || []);
 
-  // Merge self into all_players if available so the grid always shows everyone
+  renderCommunityCards((msg.table_cards || []).slice(0, nCards));
+
   const source = _mergeMyPlayer(msg.all_players || null);
   renderOthers(source, msg.others || []);
 }

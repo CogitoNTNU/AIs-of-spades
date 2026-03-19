@@ -133,6 +133,9 @@ function _updateMyStatsFromAllPlayers(allPlayers) {
 }
 
 function _applyYourTurn(obs) {
+  const streetCards = { 0: 0, 1: 3, 2: 4, 3: 5 };
+  const nCards = streetCards[obs.street] ?? 0;
+
   document.getElementById("pot-value").textContent = fmt(obs.pot);
   document.getElementById("to-call-value").textContent = fmt(obs.bet_to_match);
   document.getElementById("street-name").textContent =
@@ -147,9 +150,9 @@ function _applyYourTurn(obs) {
   myPlayerCache.stack = obs.player_stack;
   myPlayerCache.money_in_pot = obs.player_money_in_pot;
   myPlayerCache.bet_this_street = obs.bet_this_street;
-  myPlayerCache.state = 1; // ACTIVE — it's our turn
+  myPlayerCache.state = 1;
 
-  renderCommunityCards(obs.table_cards || []);
+  renderCommunityCards((obs.table_cards || []).slice(0, nCards));
   renderHandCards(obs.hand_cards || []);
 
   if (allPlayersCache) {

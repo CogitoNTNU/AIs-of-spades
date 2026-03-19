@@ -1,4 +1,3 @@
-# table_engine/hand_history_writer.py
 import time
 import os
 import numpy as np
@@ -11,11 +10,6 @@ BB = 5
 
 
 class HandHistoryWriter:
-    """
-    Handles all hand history formatting and writing to disk.
-    Can be enabled/disabled without affecting game logic.
-    """
-
     def __init__(
         self,
         location: str = "hands/",
@@ -126,6 +120,8 @@ class HandHistoryWriter:
         if not self.enabled:
             return
 
+        n = len(players)
+
         for player in players:
             if player.winnings_for_hh > 0:
                 self.history.append(
@@ -151,18 +147,24 @@ class HandHistoryWriter:
                 "Board [%s %s %s]" % tuple(Card.int_to_str(c[i]) for i in range(3))
             )
 
-        n = len(players)
         self.history.append("*** SEATS ***")
         for i, player in enumerate(players):
             pos_label = TablePosition.label(player.position, n)
+            net = player.winnings_for_hh - player.total_invested
+
             if player.winnings_for_hh > 0:
-                outcome = "won ($%.2f)" % (player.winnings_for_hh * BB)
+                outcome = "won $%.2f (net %s$%.2f)" % (
+                    player.winnings_for_hh * BB,
+                    "+" if net >= 0 else "",
+                    net * BB,
+                )
             elif player.state is PlayerState.FOLDED:
-                outcome = "folded"
+                outcome = "folded (lost $%.2f)" % (player.total_invested * BB)
             elif player.state is PlayerState.OUT:
                 outcome = "out"
             else:
-                outcome = "lost"
+                outcome = "lost $%.2f" % (player.total_invested * BB)
+
             self.history.append(
                 "Seat %d: %s [%s] %s" % (i + 1, player.name, pos_label, outcome)
             )
