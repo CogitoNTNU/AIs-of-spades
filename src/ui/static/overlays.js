@@ -28,22 +28,25 @@ function showHandResult(rewards, showdown, players, tableCards) {
   // ── Players ──
   html += entries
     .map(([name, delta]) => {
-      const cls = delta > 0 ? "pos" : delta < 0 ? "neg" : "zero";
+      const cls  = delta > 0 ? "pos" : delta < 0 ? "neg" : "zero";
       const sign = delta > 0 ? "+" : "";
       const cards = showdown && showdown[name];
       const playerInfo = players && players.find((p) => p.name === name);
 
       const cardsHTML = cards
         ? `<div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:8px;">
-           ${cards.map((c) => cardHTML(c)).join("")}
-         </div>`
+             ${cards.map((c) => cardHTML(c)).join("")}
+           </div>`
         : `<div style="margin-top:6px;font-family:'DM Mono',monospace;font-size:.65rem;
-                     color:var(--text-muted);text-align:center;">folded</div>`;
+                       color:var(--text-muted);text-align:center;">folded</div>`;
 
       const stackHTML = playerInfo
         ? `<div style="font-family:'DM Mono',monospace;font-size:.62rem;color:var(--text-muted);
-                     margin-top:2px;">stack: ${fmt(playerInfo.stack)}</div>`
+                       margin-top:2px;">stack: ${fmt(playerInfo.stack)}</div>`
         : "";
+
+      // fmt() converts BB → $ — use it for both delta and stack
+      const deltaStr = `${sign}${fmt(Math.abs(delta))}`;
 
       return `
       <div class="result-row" style="flex-direction:column;align-items:stretch;gap:4px;">
@@ -52,7 +55,7 @@ function showHandResult(rewards, showdown, players, tableCards) {
             <div class="result-name">${esc(name)}</div>
             ${stackHTML}
           </div>
-          <div class="result-delta ${cls}">${sign}${delta.toFixed(1)}</div>
+          <div class="result-delta ${cls}">${deltaStr}</div>
         </div>
         ${cardsHTML}
       </div>`;
@@ -64,9 +67,9 @@ function showHandResult(rewards, showdown, players, tableCards) {
 
   const parts = entries
     .map(([n, d]) => {
-      const cls = d > 0 ? "win" : d < 0 ? "loss" : "";
+      const cls  = d > 0 ? "win" : d < 0 ? "loss" : "";
       const sign = d > 0 ? "+" : "";
-      return `${esc(n)}: <span class="${cls}">${sign}${d.toFixed(1)}</span>`;
+      return `${esc(n)}: <span class="${cls}">${sign}${fmt(Math.abs(d))}</span>`;
     })
     .join(" · ");
   addLog(`🃏 Hand ${handNumber} — ${parts}`);
@@ -85,10 +88,10 @@ function showGameOver(stacks) {
       ([n, s], i) => `
     <div class="result-row" style="margin-bottom:8px;">
       <div class="result-name">${i === 0 ? "🏆 " : ""}${esc(n)}</div>
-      <div class="result-delta ${i === 0 ? "pos" : ""}">${fmt(s)} BB</div>
+      <div class="result-delta ${i === 0 ? "pos" : ""}">${fmt(s)}</div>
     </div>`,
     )
     .join("");
   document.getElementById("gameover-overlay").classList.add("show");
-  addLog(`🏁 <b>Game over!</b> Winner: <b>${sorted[0][0]}</b>`);
+  addLog(`🏁 <b>Game over!</b> Winner: <b>${sorted[0][0]}</b> with ${fmt(sorted[0][1])}`);
 }

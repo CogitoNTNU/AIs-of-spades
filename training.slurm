@@ -4,6 +4,7 @@
 #SBATCH --time=04:00:00
 #SBATCH --partition=GPUQ
 #SBATCH --gres=gpu:1
+#SBATCH --exclude=idun-09-[02-11,15,19-20]
 #SBATCH --cpus-per-task=14       
 #SBATCH --mem=32GB
 #SBATCH --nodes=1

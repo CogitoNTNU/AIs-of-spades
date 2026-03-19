@@ -729,6 +729,58 @@ body {
   border-color: var(--gold);
 }
 
+.bet-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.bet-input {
+  flex: 1;
+  background: var(--felt);
+  border: 1px solid var(--gold-dim);
+  color: var(--gold);
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  font-family: "Playfair Display", serif;
+  font-size: 1.4rem;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+  width: 100%;
+  -moz-appearance: textfield;
+}
+.bet-input::-webkit-outer-spin-button,
+.bet-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}
+.bet-input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px #c8a84b18;
+}
+
+.btn-step {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  background: var(--felt-light);
+  border: 1px solid var(--felt-rim);
+  color: var(--cream);
+  border-radius: var(--r-sm);
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-step:hover {
+  border-color: var(--gold-dim);
+  background: var(--felt-mid);
+  color: var(--gold);
+}
+
 /* Bet slider */
 .bet-slider-wrap {
   display: none;
@@ -1051,4 +1103,94 @@ input[type="range"].bet-slider::-moz-range-thumb {
   .btn-action {
     min-width: unset;
   }
+}
+
+
+/* ─────────────────────────────────────────────────
+
+/* Player card: show self with a subtle gold border */
+.player-card.self {
+  border-color: var(--gold-dim);
+  background: #0e2010;
+}
+
+/* Header layout: left cluster (turn # + name) and right cluster (badges) */
+.pc-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* Circular turn-order number */
+.pc-turn-badge {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--felt-rim);
+  border: 1px solid #2a4a2c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+/* Highlight the badge of the currently acting player */
+.player-card.acting .pc-turn-badge {
+  background: var(--gold-dim);
+  border-color: var(--gold);
+  color: #1a0e00;
+}
+
+/* Position badge: SB / BB / UTG / BTN */
+.pos-badge {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.52rem;
+  letter-spacing: 1.5px;
+  padding: 2px 6px;
+  border-radius: 20px;
+  border: 1px solid;
+  text-transform: uppercase;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* Right side of pc-header */
+.pc-badges {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+/* "YOU" tag inside player name */
+.you-tag {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.5rem;
+  letter-spacing: 2px;
+  color: var(--gold);
+  background: #2a1e00;
+  border: 1px solid var(--gold-dim);
+  border-radius: 10px;
+  padding: 1px 5px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* Keep pc-header from overflowing on small cards */
+.pc-header {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.pc-name {
+  max-width: 90px; /* slightly tighter to fit badges */
+}
+
+/* Pot unit line — show BB = $5 */
+.pot-unit::after {
+  opacity: 0.5;
+  font-size: 0.5rem;
 }

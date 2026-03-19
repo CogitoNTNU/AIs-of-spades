@@ -1,1 +1,1 @@
-from .even_net import EvenNet
+from .model_classes import MODEL_CLASSES, list_models

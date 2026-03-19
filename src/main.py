@@ -3,12 +3,8 @@ import argparse
 import wandb
 from training.learning_loop import LearningLoop
 from training.weight_manager import WeightManager
-from nn import EvenNet
+from nn import MODEL_CLASSES
 import yaml
-
-model_classes = {
-    "EvenNet": EvenNet,
-}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -39,7 +35,7 @@ if __name__ == "__main__":
         config=config,
     )
 
-    config["weight_manager"]["model_class"] = model_classes[
+    config["weight_manager"]["model_class"] = MODEL_CLASSES[
         config["weight_manager"]["model_class"]
     ]
 

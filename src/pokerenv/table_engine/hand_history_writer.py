@@ -1,8 +1,8 @@
-# table_engine/hand_history_writer.py
 import time
+import os
 import numpy as np
 from treys import Card
-from pokerenv.common import GameState, PlayerState
+from pokerenv.common import GameState, PlayerState, TablePosition
 from pokerenv.utils import pretty_print_hand
 
 SB = 2.5
@@ -10,11 +10,6 @@ BB = 5
 
 
 class HandHistoryWriter:
-    """
-    Handles all hand history formatting and writing to disk.
-    Can be enabled/disabled without affecting game logic.
-    """
-
     def __init__(
         self,
         location: str = "hands/",
@@ -25,6 +20,8 @@ class HandHistoryWriter:
         self.enabled = enabled
         self.track_single_player = track_single_player
         self.history = []
+        if self.enabled:
+            os.makedirs(self.location, exist_ok=True)
 
     def reset(self):
         self.history = []
@@ -36,7 +33,10 @@ class HandHistoryWriter:
     def initialize(self, players: list):
         if not self.enabled:
             return
+
+        n = len(players)
         t = time.localtime()
+
         self.history.append(
             "PokerStars Hand #%d: Hold'em No Limit ($%.2f/$%.2f USD) - %d/%d/%d %d:%d:%d ET"
             % (
@@ -51,16 +51,31 @@ class HandHistoryWriter:
                 t.tm_sec,
             )
         )
-        self.history.append("Table 'Wempe III' 6-max Seat #2 is the button")
+
+        btn_seat = next(
+            (i + 1 for i, p in enumerate(players) if p.position == n - 1),
+            1,
+        )
+        self.history.append("Table 'Wempe III' 6-max Seat #%d is the button" % btn_seat)
+
         for i, player in enumerate(players):
             self.history.append(
                 "Seat %d: %s ($%.2f in chips)" % (i + 1, player.name, player.stack * BB)
             )
 
+        self.history.append("*** HOLE CARDS ***")
+
+        for player in sorted(players, key=lambda p: p.position):
+            if player.state is PlayerState.OUT:
+                continue
+            self.history.append(
+                "%s: posts %s"
+                % (player.name, TablePosition.hh_label(player.position, n))
+            )
+
     def write_hole_cards(self, players: list):
         if not self.enabled:
             return
-        self.history.append("*** HOLE CARDS ***")
         for player in players:
             if self.track_single_player or player.identifier == 0:
                 self.history.append(
@@ -104,45 +119,54 @@ class HandHistoryWriter:
     ):
         if not self.enabled:
             return
+
+        n = len(players)
+
         for player in players:
             if player.winnings_for_hh > 0:
                 self.history.append(
                     "%s collected $%.2f from pot"
                     % (player.name, player.winnings_for_hh * BB)
                 )
+
         self.history.append("*** SUMMARY ***")
         self.history.append("Total pot $%.2f | Rake $%.2f" % (pot * BB, 0))
 
         c = community_cards
-        if street == GameState.FLOP and len(c) >= 3:
-            self.history.append(
-                "Board [%s %s %s]"
-                % (
-                    Card.int_to_str(c[0]),
-                    Card.int_to_str(c[1]),
-                    Card.int_to_str(c[2]),
-                )
-            )
-        elif street == GameState.TURN and len(c) >= 4:
-            self.history.append(
-                "Board [%s %s %s %s]"
-                % (
-                    Card.int_to_str(c[0]),
-                    Card.int_to_str(c[1]),
-                    Card.int_to_str(c[2]),
-                    Card.int_to_str(c[3]),
-                )
-            )
-        elif street == GameState.RIVER and len(c) >= 5:
+        if len(c) >= 5:
             self.history.append(
                 "Board [%s %s %s %s %s]"
-                % (
-                    Card.int_to_str(c[0]),
-                    Card.int_to_str(c[1]),
-                    Card.int_to_str(c[2]),
-                    Card.int_to_str(c[3]),
-                    Card.int_to_str(c[4]),
+                % tuple(Card.int_to_str(c[i]) for i in range(5))
+            )
+        elif len(c) == 4:
+            self.history.append(
+                "Board [%s %s %s %s]" % tuple(Card.int_to_str(c[i]) for i in range(4))
+            )
+        elif len(c) == 3:
+            self.history.append(
+                "Board [%s %s %s]" % tuple(Card.int_to_str(c[i]) for i in range(3))
+            )
+
+        self.history.append("*** SEATS ***")
+        for i, player in enumerate(players):
+            pos_label = TablePosition.label(player.position, n)
+            net = player.winnings_for_hh - player.total_invested
+
+            if player.winnings_for_hh > 0:
+                outcome = "won $%.2f (net %s$%.2f)" % (
+                    player.winnings_for_hh * BB,
+                    "+" if net >= 0 else "",
+                    net * BB,
                 )
+            elif player.state is PlayerState.FOLDED:
+                outcome = "folded (lost $%.2f)" % (player.total_invested * BB)
+            elif player.state is PlayerState.OUT:
+                outcome = "out"
+            else:
+                outcome = "lost $%.2f" % (player.total_invested * BB)
+
+            self.history.append(
+                "Seat %d: %s [%s] %s" % (i + 1, player.name, pos_label, outcome)
             )
 
     def flush_to_disk(self):

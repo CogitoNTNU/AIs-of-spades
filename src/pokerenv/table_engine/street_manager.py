@@ -94,11 +94,14 @@ class StreetManager:
     def first_to_act_after_transition(
         self, players: list, n_players: int
     ) -> int | None:
-        """Returns the index of the first active non-all-in player after a street transition."""
+        """Returns the seat index of the first active non-all-in player after a street
+        transition.  Post-flop action starts with the lowest *position* value (SB = 0),
+        not the lowest seat index."""
         candidates = [
             i
             for i in range(n_players)
-            if players[i].state is PlayerState.ACTIVE
-            if not players[i].all_in
+            if players[i].state is PlayerState.ACTIVE and not players[i].all_in
         ]
-        return min(candidates) if candidates else None
+        if not candidates:
+            return None
+        return min(candidates, key=lambda i: players[i].position)

@@ -33,7 +33,6 @@ function handle(msg) {
       totalHands = msg.total_hands ?? 20;
       document.getElementById("tb-name").textContent = myName;
       show("screen-lobby");
-      addLog(`Joined as <b>${myName}</b> — seat ${mySeat}`);
       break;
 
     case "waiting": {
@@ -51,15 +50,23 @@ function handle(msg) {
     }
 
     case "player_state":
-      // Sent right after reset_hand so every player sees their cards + stack
-      // before their turn arrives.
       show("screen-game");
       renderHandCards(msg.hand_cards || []);
-      if (msg.stack !== undefined)
+      if (!myPlayerCache) myPlayerCache = { seat: mySeat, name: myName };
+      if (msg.stack !== undefined) {
+        myPlayerCache.stack = msg.stack;
         document.getElementById("my-stack").textContent = fmt(msg.stack);
+      }
       break;
 
     case "table_update":
+      // Cache all_players
+      if (msg.all_players) {
+        allPlayersCache = msg.all_players;
+        // Also update own stats from all_players so "Your Position" panel
+        // stays current even when it's not our turn
+        _updateMyStatsFromAllPlayers(msg.all_players);
+      }
       applyTableUpdate(msg);
       break;
 
@@ -85,17 +92,13 @@ function handle(msg) {
       );
       disableActions();
       break;
-      
-    case "game_over":
-      showGameOver(msg.final_stacks);
+
+    case "hand_log":
+      appendHandLog(msg.lines || []);
       break;
 
-    case "hand_result":
-      handNumber++;
-      document.getElementById("tb-hand").textContent =
-        `${handNumber} / ${totalHands}`;
-      showHandResult(msg.rewards, msg.showdown || {}); // ← aggiungi msg.showdown
-      disableActions();
+    case "game_over":
+      showGameOver(msg.final_stacks || {});
       break;
 
     case "error":
@@ -105,8 +108,34 @@ function handle(msg) {
   }
 }
 
-/** Full update when it's this player's turn to act. */
+/**
+ * When a table_update arrives with all_players, find our own entry and
+ * update the "Your Position" stats panel + myPlayerCache.
+ * This keeps our stack/pot/street-bet current between turns.
+ */
+function _updateMyStatsFromAllPlayers(allPlayers) {
+  if (mySeat === null) return;
+  const me = allPlayers.find((p) => p.seat === mySeat);
+  if (!me) return;
+
+  if (!myPlayerCache) myPlayerCache = { seat: mySeat, name: myName };
+  myPlayerCache.stack = me.stack;
+  myPlayerCache.money_in_pot = me.money_in_pot;
+  myPlayerCache.bet_this_street = me.bet_this_street;
+  myPlayerCache.state = me.state;
+  myPlayerCache.position = me.position;
+
+  document.getElementById("my-stack").textContent = fmt(me.stack);
+  document.getElementById("my-pot").textContent = fmt(me.money_in_pot);
+  document.getElementById("my-street-bet").textContent = fmt(
+    me.bet_this_street,
+  );
+}
+
 function _applyYourTurn(obs) {
+  const streetCards = { 0: 0, 1: 3, 2: 4, 3: 5 };
+  const nCards = streetCards[obs.street] ?? 0;
+
   document.getElementById("pot-value").textContent = fmt(obs.pot);
   document.getElementById("to-call-value").textContent = fmt(obs.bet_to_match);
   document.getElementById("street-name").textContent =
@@ -117,17 +146,48 @@ function _applyYourTurn(obs) {
     obs.bet_this_street,
   );
 
-  renderCommunityCards(obs.table_cards || []);
+  if (!myPlayerCache) myPlayerCache = { seat: mySeat, name: myName };
+  myPlayerCache.stack = obs.player_stack;
+  myPlayerCache.money_in_pot = obs.player_money_in_pot;
+  myPlayerCache.bet_this_street = obs.bet_this_street;
+  myPlayerCache.state = 1;
+
+  renderCommunityCards((obs.table_cards || []).slice(0, nCards));
   renderHandCards(obs.hand_cards || []);
-  renderOthers(obs.others || []);
+
+  if (allPlayersCache) {
+    const merged = allPlayersCache.map((p) => {
+      if (p.seat === mySeat) return { ...p, ...myPlayerCache };
+      const other = obs.others.find((o) => o.position === p.position);
+      if (!other) return p;
+      return {
+        ...p,
+        state: other.state,
+        stack: other.stack,
+        money_in_pot: other.money_in_pot,
+        bet_this_street: other.bet_this_street,
+        is_all_in: other.is_all_in,
+      };
+    });
+    renderOthers(merged, null);
+  } else {
+    renderOthers(null, obs.others || []);
+  }
 
   const banner = document.getElementById("turn-banner");
   banner.textContent = "⬡  YOUR TURN";
   banner.classList.add("your-turn");
 
   applyActionButtons(obs);
+}
 
-  addLog(
-    `<span class="gold">⬡ Your turn</span> — street: <b>${STREETS[obs.street]}</b>, pot: <b>${fmt(obs.pot)}</b>, to call: <b>${fmt(obs.bet_to_match)}</b>`,
-  );
+function appendHandLog(lines) {
+  lines.forEach((line) => {
+    if (!line) return;
+    const formatted = esc(line)
+      .replace(/(raises|bets|calls|folds|checks)/g, "<b>$1</b>")
+      .replace(/\*\*\* ([^*]+) \*\*\*/g, '<span class="gold">*** $1 ***</span>')
+      .replace(/collected \$[\d.]+/g, (m) => `<span class="win">${m}</span>`);
+    addLog(formatted);
+  });
 }

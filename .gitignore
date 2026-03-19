@@ -254,3 +254,4 @@ lerna-debug.log
 Thumbs.db
 wandb
 checkpoints
+hands/*

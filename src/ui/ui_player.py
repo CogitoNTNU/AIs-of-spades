@@ -36,30 +36,20 @@ import torch
 
 
 def _observation_to_dict(obs: Observation) -> dict:
-    """
-    Serialize an Observation into a JSON-safe dict for the browser UI.
+    raw_can_fold = bool(obs.actions.actions[0])
+    raw_can_bet = bool(obs.actions.actions[1])
+    raw_can_call = bool(obs.actions.actions[2])
 
-    Action encoding (from Table._get_observation / PlayerAction enum):
-      obs[1] -> FOLD bit   (PlayerAction.FOLD  = 0)
-      obs[2] -> BET  bit   (PlayerAction.BET   = 1)
-      obs[3] -> CALL bit   (PlayerAction.CALL  = 2)
-
-    A "check" is a CALL when no additional chips are owed:
-      bet_to_match == 0  OR  player has already matched (bet_this_street >= bet_to_match)
-    """
-    # Raw CALL bit lives at actions[2] in the ActionsObservation (obs slice [1:5])
-    # ActionsObservation maps:  [0]=FOLD, [1]=BET, [2]=CALL, [3]=0
-    raw_can_fold = bool(obs.actions.actions[0])  # FOLD bit
-    raw_can_bet = bool(obs.actions.actions[1])  # BET bit
-    raw_can_call = bool(obs.actions.actions[2])  # CALL bit
-
-    # Check: player can act AND owes no additional chips
     can_check = raw_can_call and (
         float(obs.bet_to_match) == 0.0
         or float(obs.bet_this_street) >= float(obs.bet_to_match)
     )
-    # Show "call" only when there is actually something to call
     can_call = raw_can_call and not can_check
+
+    # Use street to determine how many community cards have been dealt.
+    # Filtering by (suit==0, rank==0) is wrong: the 2 of clubs has exactly
+    # those values and would be dropped.
+    n_table_cards = {0: 0, 1: 3, 2: 4, 3: 5}.get(int(obs.street), 0)
 
     return {
         "player_identifier": int(obs.player_identifier),
@@ -71,16 +61,12 @@ def _observation_to_dict(obs: Observation) -> dict:
         "pot": float(obs.pot),
         "bet_to_match": float(obs.bet_to_match),
         "minimum_raise": float(obs.minimum_raise),
-        # Never filter hand cards — always 2 real cards, rank 0 = valid Two.
-        # For table cards filter empty slots: undealt slots have suit bitmask 0
-        # which CardObservation stores as log2(0)→0 AND rank 0 together.
         "hand_cards": [
             {"suit": int(c.suit), "rank": int(c.rank)} for c in obs.hand_cards.cards
         ],
         "table_cards": [
             {"suit": int(c.suit), "rank": int(c.rank)}
-            for c in obs.table_cards.cards
-            if not (int(c.suit) == 0 and int(c.rank) == 0)
+            for c in obs.table_cards.cards[:n_table_cards]
         ],
         "actions": {
             "check": can_check,

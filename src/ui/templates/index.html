@@ -1,190 +1,246 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>POKER LAN</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-<style>{{CSS}}</style>
-</head>
-<body>
-
-<!-- ══ JOIN SCREEN ══ -->
-<div id="screen-join" class="screen">
-  <div class="logo">
-    <div class="logo-suits">♠ ♥ ♦ ♣</div>
-    <div class="logo-title">POKER</div>
-    <div class="logo-sub">Texas Hold'em · LAN Edition</div>
-  </div>
-  <div class="panel join-card">
-    <h2>TAKE A SEAT</h2>
-    <div class="field-wrap">
-      <label class="field-label" for="name-input">Your Name</label>
-      <input id="name-input" class="field-input" type="text" maxlength="20"
-             placeholder="Enter a name…" autocomplete="off"
-             onkeydown="if(event.key==='Enter')joinTable()" />
-    </div>
-    <button class="btn-join" onclick="joinTable()">JOIN TABLE</button>
-    <div id="join-error" style="margin-top:12px;font-family:'DM Mono',monospace;font-size:.7rem;color:var(--red-bright);text-align:center;min-height:18px;"></div>
-  </div>
-</div>
-
-<!-- ══ LOBBY SCREEN ══ -->
-<div id="screen-lobby" class="screen">
-  <div class="logo" style="margin-bottom:20px;">
-    <div class="logo-title" style="font-size:2rem;">POKER</div>
-  </div>
-  <div class="panel lobby-card">
-    <h2>WAITING ROOM</h2>
-    <div class="lobby-subtitle" id="lobby-subtitle">Filling seats…</div>
-    <div class="seats-grid" id="seats-grid"></div>
-    <div class="lobby-status" id="lobby-status">Waiting for players…</div>
-  </div>
-</div>
-
-<!-- ══ GAME SCREEN ══ -->
-<div id="screen-game" class="screen">
-
-  <!-- Top bar -->
-  <div class="topbar">
-    <div class="topbar-item">
-      <div class="topbar-label">Player</div>
-      <div class="topbar-value" id="tb-name">—</div>
-    </div>
-    <div class="topbar-logo">♠ POKER ♠</div>
-    <div class="topbar-item">
-      <div class="topbar-label">Hand</div>
-      <div class="topbar-value" id="tb-hand">— / —</div>
-    </div>
-  </div>
-
-  <!-- Turn banner -->
-  <div id="turn-banner">Waiting for game to start…</div>
-
-  <!-- Community cards + Pot -->
-  <div class="table-section">
-    <div class="panel community-panel">
-      <div class="panel-title">Community Cards</div>
-      <div class="community-cards" id="community-cards">
-        <div class="card-placeholder">♠</div>
-        <div class="card-placeholder">♥</div>
-        <div class="card-placeholder">♦</div>
-        <div class="card-placeholder">♣</div>
-        <div class="card-placeholder">?</div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>POKER LAN</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      {{CSS}}
+    </style>
+  </head>
+  <body>
+    <!-- ══ JOIN SCREEN ══ -->
+    <div id="screen-join" class="screen">
+      <div class="logo">
+        <div class="logo-suits">♠ ♥ ♦ ♣</div>
+        <div class="logo-title">POKER</div>
+        <div class="logo-sub">Texas Hold'em · LAN Edition</div>
       </div>
-    </div>
-    <div class="panel pot-panel">
-      <div>
-        <div class="panel-title">Pot</div>
-        <div class="pot-number" id="pot-value">0.0</div>
-        <div class="pot-unit">BIG BLINDS</div>
-      </div>
-      <div class="to-call-wrap">
-        <div class="to-call-label">To Call</div>
-        <div class="to-call-value" id="to-call-value">—</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Your hand + stats -->
-  <div class="hand-section">
-    <div class="panel hand-panel">
-      <div class="panel-title">Your Hand</div>
-      <div class="hand-cards" id="hand-cards">
-        <div class="card-back">🂠</div>
-        <div class="card-back">🂠</div>
-      </div>
-    </div>
-    <div class="panel stack-panel">
-      <div class="panel-title">Your Position</div>
-      <div class="stack-grid">
-        <div class="stack-stat">
-          <div class="ss-label">Stack</div>
-          <div class="ss-value" id="my-stack">—</div>
+      <div class="panel join-card">
+        <h2>TAKE A SEAT</h2>
+        <div class="field-wrap">
+          <label class="field-label" for="name-input">Your Name</label>
+          <input
+            id="name-input"
+            class="field-input"
+            type="text"
+            maxlength="20"
+            placeholder="Enter a name…"
+            autocomplete="off"
+            onkeydown="if (event.key === 'Enter') joinTable();"
+          />
         </div>
-        <div class="stack-stat">
-          <div class="ss-label">In Pot</div>
-          <div class="ss-value" id="my-pot">—</div>
+        <button class="btn-join" onclick="joinTable()">JOIN TABLE</button>
+        <div
+          id="join-error"
+          style="
+            margin-top: 12px;
+            font-family: &quot;DM Mono&quot;, monospace;
+            font-size: 0.7rem;
+            color: var(--red-bright);
+            text-align: center;
+            min-height: 18px;
+          "
+        ></div>
+      </div>
+    </div>
+
+    <!-- ══ LOBBY SCREEN ══ -->
+    <div id="screen-lobby" class="screen">
+      <div class="logo" style="margin-bottom: 20px">
+        <div class="logo-title" style="font-size: 2rem">POKER</div>
+      </div>
+      <div class="panel lobby-card">
+        <h2>WAITING ROOM</h2>
+        <div class="lobby-subtitle" id="lobby-subtitle">Filling seats…</div>
+        <div class="seats-grid" id="seats-grid"></div>
+        <div class="lobby-status" id="lobby-status">Waiting for players…</div>
+      </div>
+    </div>
+
+    <!-- ══ GAME SCREEN ══ -->
+    <div id="screen-game" class="screen">
+      <!-- Top bar -->
+      <div class="topbar">
+        <div class="topbar-item">
+          <div class="topbar-label">Player</div>
+          <div class="topbar-value" id="tb-name">—</div>
         </div>
-        <div class="stack-stat">
-          <div class="ss-label">Street Bet</div>
-          <div class="ss-value" id="my-street-bet">—</div>
-        </div>
-        <div class="stack-stat">
-          <div class="ss-label">Street</div>
-          <div class="ss-value" id="street-name">—</div>
+        <div class="topbar-logo">♠ POKER ♠</div>
+        <div class="topbar-item">
+          <div class="topbar-label">Hand</div>
+          <div class="topbar-value" id="tb-hand">— / —</div>
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- Other players -->
-  <div class="panel others-panel">
-    <div class="panel-title">Other Players</div>
-    <div class="players-grid" id="players-grid">
-      <div style="color:var(--text-muted);font-family:'DM Mono',monospace;font-size:.75rem;">Waiting for players…</div>
-    </div>
-  </div>
+      <!-- Turn banner -->
+      <div id="turn-banner">Waiting for game to start…</div>
 
-  <!-- Action panel -->
-  <div class="panel action-panel" id="action-panel">
-    <div class="panel-title">Your Action</div>
-    <div class="action-btns">
-      <button id="btn-checkcall" class="btn-action btn-check" onclick="doCheckCall()">
-        <span class="btn-icon">✓</span>
-        <span class="btn-label">CHECK</span>
-      </button>
-      <button id="btn-fold" class="btn-action btn-fold" onclick="doAction('fold')" disabled>
-        <span class="btn-icon">✕</span>
-        <span class="btn-label">FOLD</span>
-      </button>
-      <button id="btn-raise" class="btn-action btn-raise" onclick="toggleBetSlider()" disabled>
-        <span class="btn-icon">↑</span>
-        <span class="btn-label">BET / RAISE</span>
-      </button>
-    </div>
-    <div class="bet-slider-wrap" id="bet-slider-wrap">
-      <div class="bet-amount-display">
-        <span>Bet Amount</span>
-        <span id="bet-display-val">0.0</span>
+      <!-- Community cards + Pot -->
+      <div class="table-section">
+        <div class="panel community-panel">
+          <div class="panel-title">Community Cards</div>
+          <div class="community-cards" id="community-cards">
+            <div class="card-placeholder">♠</div>
+            <div class="card-placeholder">♥</div>
+            <div class="card-placeholder">♦</div>
+            <div class="card-placeholder">♣</div>
+            <div class="card-placeholder">?</div>
+          </div>
+        </div>
+        <div class="panel pot-panel">
+          <div>
+            <div class="panel-title">Pot</div>
+            <div class="pot-number" id="pot-value">0.0</div>
+          </div>
+          <div class="to-call-wrap">
+            <div class="to-call-label">To Call</div>
+            <div class="to-call-value" id="to-call-value">—</div>
+          </div>
+        </div>
       </div>
-      <input type="range" class="bet-slider" id="bet-slider"
-             min="0" max="100" step="0.5" oninput="syncBetSlider()" />
-      <div class="bet-presets" id="bet-presets"></div>
-      <button class="btn-confirm" onclick="confirmBet()">CONFIRM BET</button>
+
+      <!-- Your hand + stats -->
+      <div class="hand-section">
+        <div class="panel hand-panel">
+          <div class="panel-title">Your Hand</div>
+          <div class="hand-cards" id="hand-cards">
+            <div class="card-back">🂠</div>
+            <div class="card-back">🂠</div>
+          </div>
+        </div>
+        <div class="panel stack-panel">
+          <div class="panel-title">Your Position</div>
+          <div class="stack-grid">
+            <div class="stack-stat">
+              <div class="ss-label">Stack</div>
+              <div class="ss-value" id="my-stack">—</div>
+            </div>
+            <div class="stack-stat">
+              <div class="ss-label">In Pot</div>
+              <div class="ss-value" id="my-pot">—</div>
+            </div>
+            <div class="stack-stat">
+              <div class="ss-label">Street Bet</div>
+              <div class="ss-value" id="my-street-bet">—</div>
+            </div>
+            <div class="stack-stat">
+              <div class="ss-label">Street</div>
+              <div class="ss-value" id="street-name">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Other players -->
+      <div class="panel others-panel">
+        <div class="panel-title">Other Players</div>
+        <div class="players-grid" id="players-grid">
+          <div
+            style="
+              color: var(--text-muted);
+              font-family: &quot;DM Mono&quot;, monospace;
+              font-size: 0.75rem;
+            "
+          >
+            Waiting for players…
+          </div>
+        </div>
+      </div>
+
+      <!-- Action panel -->
+      <div class="panel action-panel" id="action-panel">
+        <div class="panel-title">Your Action</div>
+        <div class="action-btns">
+          <button
+            id="btn-checkcall"
+            class="btn-action btn-check"
+            onclick="doCheckCall()"
+          >
+            <span class="btn-icon">✓</span>
+            <span class="btn-label">CHECK</span>
+          </button>
+          <button
+            id="btn-fold"
+            class="btn-action btn-fold"
+            onclick="doAction('fold')"
+            disabled
+          >
+            <span class="btn-icon">✕</span>
+            <span class="btn-label">FOLD</span>
+          </button>
+          <button
+            id="btn-raise"
+            class="btn-action btn-raise"
+            onclick="toggleBetSlider()"
+            disabled
+          >
+            <span class="btn-icon">↑</span>
+            <span class="btn-label">BET / RAISE</span>
+          </button>
+        </div>
+        <div id="bet-slider-wrap" class="bet-slider-wrap">
+          <div class="bet-amount-display">
+            <span>BET AMOUNT</span>
+            <span id="bet-display-val">$0.00</span>
+          </div>
+
+          <input
+            id="bet-input"
+            class="bet-input"
+            type="number"
+            min="0" max="9999" step="0.25"
+            value="0"
+            oninput="syncBetInput()"
+            onblur="_clampBetInput(); _syncBetDisplay(parseFloat(document.getElementById('bet-input').value))"
+          />
+
+          <div id="bet-presets" class="bet-presets"></div>
+
+          <button class="btn-confirm" onclick="confirmBet()">
+            Confirm Bet
+          </button>
+        </div>
+      </div>
+
+      <!-- Hand history log -->
+      <div class="panel log-panel">
+        <div class="panel-title">Hand History</div>
+        <div id="log"></div>
+      </div>
     </div>
-  </div>
+    <!-- /#screen-game -->
 
-  <!-- Hand history log -->
-  <div class="panel log-panel">
-    <div class="panel-title">Hand History</div>
-    <div id="log"></div>
-  </div>
+    <!-- Hand result overlay -->
+    <div id="result-overlay">
+      <div class="result-card">
+        <div class="result-title">HAND OVER</div>
+        <div class="result-subtitle" id="result-street">—</div>
+        <div class="result-list" id="result-list"></div>
+        <button class="btn-continue" onclick="closeResult()">NEXT HAND</button>
+      </div>
+    </div>
 
-</div><!-- /#screen-game -->
+    <!-- Game over overlay -->
+    <div id="gameover-overlay">
+      <div class="gameover-card">
+        <div class="gameover-title">GAME OVER</div>
+        <div class="gameover-suits">♠ ♥ ♦ ♣</div>
+        <div id="gameover-stacks" style="margin-bottom: 28px"></div>
+        <button class="btn-continue" onclick="location.reload()">
+          NEW GAME
+        </button>
+      </div>
+    </div>
 
-<!-- Hand result overlay -->
-<div id="result-overlay">
-  <div class="result-card">
-    <div class="result-title">HAND OVER</div>
-    <div class="result-subtitle" id="result-street">—</div>
-    <div class="result-list" id="result-list"></div>
-    <button class="btn-continue" onclick="closeResult()">NEXT HAND</button>
-  </div>
-</div>
-
-<!-- Game over overlay -->
-<div id="gameover-overlay">
-  <div class="gameover-card">
-    <div class="gameover-title">GAME OVER</div>
-    <div class="gameover-suits">♠ ♥ ♦ ♣</div>
-    <div id="gameover-stacks" style="margin-bottom:28px;"></div>
-    <button class="btn-continue" onclick="location.reload()">NEW GAME</button>
-  </div>
-</div>
-
-<script>{{JS}}</script>
-</body>
+    <script>
+      {{JS}}
+    </script>
+  </body>
 </html>
