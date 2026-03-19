@@ -33,7 +33,6 @@ function handle(msg) {
       totalHands = msg.total_hands ?? 20;
       document.getElementById("tb-name").textContent = myName;
       show("screen-lobby");
-      addLog(`Joined as <b>${myName}</b> — seat ${mySeat}`);
       break;
 
     case "waiting": {
@@ -53,8 +52,7 @@ function handle(msg) {
     case "player_state":
       show("screen-game");
       renderHandCards(msg.hand_cards || []);
-      // Update self-cache so the player grid shows our current stack
-      if (myPlayerCache === null) myPlayerCache = {};
+      if (!myPlayerCache) myPlayerCache = { seat: mySeat, name: myName };
       if (msg.stack !== undefined) {
         myPlayerCache.stack = msg.stack;
         document.getElementById("my-stack").textContent = fmt(msg.stack);
@@ -62,7 +60,13 @@ function handle(msg) {
       break;
 
     case "table_update":
-      if (msg.all_players) allPlayersCache = msg.all_players;
+      // Cache all_players
+      if (msg.all_players) {
+        allPlayersCache = msg.all_players;
+        // Also update own stats from all_players so "Your Position" panel
+        // stays current even when it's not our turn
+        _updateMyStatsFromAllPlayers(msg.all_players);
+      }
       applyTableUpdate(msg);
       break;
 
@@ -104,9 +108,31 @@ function handle(msg) {
   }
 }
 
-/** Full update when it's this player's turn to act. */
+/**
+ * When a table_update arrives with all_players, find our own entry and
+ * update the "Your Position" stats panel + myPlayerCache.
+ * This keeps our stack/pot/street-bet current between turns.
+ */
+function _updateMyStatsFromAllPlayers(allPlayers) {
+  if (mySeat === null) return;
+  const me = allPlayers.find((p) => p.seat === mySeat);
+  if (!me) return;
+
+  if (!myPlayerCache) myPlayerCache = { seat: mySeat, name: myName };
+  myPlayerCache.stack = me.stack;
+  myPlayerCache.money_in_pot = me.money_in_pot;
+  myPlayerCache.bet_this_street = me.bet_this_street;
+  myPlayerCache.state = me.state;
+  myPlayerCache.position = me.position;
+
+  document.getElementById("my-stack").textContent = fmt(me.stack);
+  document.getElementById("my-pot").textContent = fmt(me.money_in_pot);
+  document.getElementById("my-street-bet").textContent = fmt(
+    me.bet_this_street,
+  );
+}
+
 function _applyYourTurn(obs) {
-  // Update own stats panel
   document.getElementById("pot-value").textContent = fmt(obs.pot);
   document.getElementById("to-call-value").textContent = fmt(obs.bet_to_match);
   document.getElementById("street-name").textContent =
@@ -117,25 +143,18 @@ function _applyYourTurn(obs) {
     obs.bet_this_street,
   );
 
-  // Keep myPlayerCache in sync so the grid shows our live stats
   if (!myPlayerCache) myPlayerCache = { seat: mySeat, name: myName };
   myPlayerCache.stack = obs.player_stack;
   myPlayerCache.money_in_pot = obs.player_money_in_pot;
   myPlayerCache.bet_this_street = obs.bet_this_street;
-  myPlayerCache.state = 1; // ACTIVE (it's our turn)
+  myPlayerCache.state = 1; // ACTIVE — it's our turn
 
   renderCommunityCards(obs.table_cards || []);
   renderHandCards(obs.hand_cards || []);
 
-  // Merge live stats from obs.others into allPlayersCache (which has names),
-  // then inject our own updated entry so the grid shows all players including self.
   if (allPlayersCache) {
     const merged = allPlayersCache.map((p) => {
-      if (p.seat === mySeat) {
-        // Use our own live data from the observation
-        return { ...p, ...myPlayerCache };
-      }
-      // obs.others is relative to the acting player — match by position
+      if (p.seat === mySeat) return { ...p, ...myPlayerCache };
       const other = obs.others.find((o) => o.position === p.position);
       if (!other) return p;
       return {
@@ -156,18 +175,9 @@ function _applyYourTurn(obs) {
   banner.textContent = "⬡  YOUR TURN";
   banner.classList.add("your-turn");
 
-  // ── Enable action buttons ONLY when it's genuinely our turn ──
   applyActionButtons(obs);
-
-  addLog(
-    `<span class="gold">⬡ Your turn</span> — street: <b>${STREETS[obs.street]}</b>, ` +
-      `pot: <b>${fmt(obs.pot)}</b>, to call: <b>${fmt(obs.bet_to_match)}</b>`,
-  );
 }
 
-/**
- * Append real hand-history lines from the server's hh.history to the log panel.
- */
 function appendHandLog(lines) {
   lines.forEach((line) => {
     if (!line) return;

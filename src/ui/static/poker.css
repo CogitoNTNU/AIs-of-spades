@@ -1139,7 +1139,6 @@ input[type="range"].bet-slider::-moz-range-thumb {
 
 /* Pot unit line — show BB = $5 */
 .pot-unit::after {
-  content: '  (1 BB = $5)';
   opacity: 0.5;
   font-size: 0.5rem;
 }
