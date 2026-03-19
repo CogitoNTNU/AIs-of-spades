@@ -24,6 +24,7 @@ class Player(ABC):
         self.winnings = 0
         self.winnings_for_hh = 0
         self.total_invested = 0
+        self.penalty = penalty
 
     def __lt__(self, other):
         return self.identifier < other.identifier

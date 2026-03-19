@@ -1,6 +1,6 @@
 /* ── actions.js ───────────────────────────────────
    Action panel: check/call/fold/bet buttons,
-   bet slider, presets.
+   bet input, presets.
    Depends on: state.js, utils.js
 ─────────────────────────────────────────────── */
 
@@ -31,14 +31,16 @@ function applyActionButtons(obs) {
   document.getElementById("btn-fold").disabled = !a.fold;
   document.getElementById("btn-raise").disabled = !a.bet;
 
-  const sl = document.getElementById("bet-slider");
-  sl.min = obs.bet_range.lower * BB_DOLLARS;
-  sl.max = obs.bet_range.upper * BB_DOLLARS;
-  sl.step = 0.25;
-  sl.value = obs.bet_range.lower * BB_DOLLARS;
-  document.getElementById("bet-display-val").textContent = fmt(
-    obs.bet_range.lower,
-  );
+  const lower = obs.bet_range.lower * BB_DOLLARS;
+  const upper = obs.bet_range.upper * BB_DOLLARS;
+
+  const input = document.getElementById("bet-input");
+  input.min   = lower.toFixed(2);
+  input.max   = upper.toFixed(2);
+  input.step  = "0.25";
+  input.value = lower.toFixed(2);
+  _syncBetDisplay(lower);
+
   buildPresets(obs.bet_range.lower, obs.bet_range.upper, obs.pot);
   document.getElementById("bet-slider-wrap").classList.remove("open");
 }
@@ -68,41 +70,70 @@ function toggleBetSlider() {
   document.getElementById("bet-slider-wrap").classList.toggle("open");
 }
 
-function syncBetSlider() {
-  const dollars = parseFloat(document.getElementById("bet-slider").value);
+function _syncBetDisplay(dollars) {
   document.getElementById("bet-display-val").textContent =
-    "$" + dollars.toFixed(2);
+    "$" + Number(dollars).toFixed(2);
+}
+
+function _clampBetInput() {
+  const input   = document.getElementById("bet-input");
+  const val     = parseFloat(input.value) || parseFloat(input.min);
+  const clamped = Math.min(
+    parseFloat(input.max),
+    Math.max(parseFloat(input.min), val),
+  );
+  input.value = clamped.toFixed(2);
+  return clamped;
+}
+
+// Aggiorna solo il display mentre si digita, senza clampare
+function syncBetInput() {
+  const dollars = parseFloat(document.getElementById("bet-input").value);
+  if (!isNaN(dollars)) {
+    _syncBetDisplay(dollars);
+  }
 }
 
 function confirmBet() {
   if (!ws) return;
-  const dollars = parseFloat(document.getElementById("bet-slider").value);
+  // Clampa solo al momento della conferma, non durante la digitazione
+  const dollars  = _clampBetInput();
+  _syncBetDisplay(dollars);
   const bbAmount = dollars / BB_DOLLARS;
   disableActions();
   ws.send(
-    JSON.stringify({
-      type: "action",
-      action_type: "bet",
-      bet_amount: bbAmount,
-    }),
+    JSON.stringify({ type: "action", action_type: "bet", bet_amount: bbAmount }),
   );
   const banner = document.getElementById("turn-banner");
   banner.classList.remove("your-turn");
   banner.textContent = "Waiting…";
 }
 
+function stepBet(direction) {
+  const input   = document.getElementById("bet-input");
+  const step    = parseFloat(input.step) || 0.25;
+  const current = parseFloat(input.value) || parseFloat(input.min);
+  const next    = Math.min(
+    parseFloat(input.max),
+    Math.max(parseFloat(input.min), current + direction * step),
+  );
+  input.value = next.toFixed(2);
+  _syncBetDisplay(next);
+}
+
 function buildPresets(lowerBB, upperBB, potBB) {
   const lower = lowerBB * BB_DOLLARS;
   const upper = upperBB * BB_DOLLARS;
-  const pot = potBB * BB_DOLLARS;
+  const pot   = potBB   * BB_DOLLARS;
 
   const candidates = [
-    { label: "½ pot", val: pot * 0.5 },
-    { label: "¾ pot", val: pot * 0.75 },
+    { label: "½ pot",  val: pot * 0.5 },
+    { label: "¾ pot",  val: pot * 0.75 },
     { label: "1× pot", val: pot },
     { label: "2× pot", val: pot * 2 },
     { label: "All-in", val: upper },
   ];
+
   document.getElementById("bet-presets").innerHTML = candidates
     .filter((p) => p.val >= lower - 0.01 && p.val <= upper + 0.01)
     .map((p) => {
@@ -113,8 +144,11 @@ function buildPresets(lowerBB, upperBB, potBB) {
 }
 
 function setPreset(dollarVal) {
-  const sl = document.getElementById("bet-slider");
-  sl.value = Math.max(+sl.min, Math.min(+sl.max, dollarVal));
-  document.getElementById("bet-display-val").textContent =
-    "$" + (+sl.value).toFixed(2);
+  const input   = document.getElementById("bet-input");
+  const clamped = Math.min(
+    parseFloat(input.max),
+    Math.max(parseFloat(input.min), dollarVal),
+  );
+  input.value = clamped.toFixed(2);
+  _syncBetDisplay(clamped);
 }

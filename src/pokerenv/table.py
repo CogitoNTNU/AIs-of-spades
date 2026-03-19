@@ -12,6 +12,7 @@ from pokerenv.table_engine import (
     StreetManager,
     HandHistoryWriter,
 )
+from pokerenv.utils import approx_gt, approx_lte
 
 BB = 5
 
@@ -243,7 +244,8 @@ class Table(gym.Env):
                 amount = min(1, player.stack)
                 if amount > 0:
                     self.pot_mgr.add(player.bet(amount))
-                    self.betting.change_bet_to_match(amount)
+                    self.betting.bet_to_match = amount
+                    self.betting.minimum_raise = amount
                     self.betting.last_bet_placed_by = player
                     self.hh.write(
                         "%s: posts big blind $%.2f" % (player.name, amount * BB)
@@ -251,11 +253,31 @@ class Table(gym.Env):
 
     def _apply_action(self, player, action: Action):
         valid_actions = self.betting.get_valid_actions(player, self.players)
-        is_valid, fallback = self.betting.is_action_valid(player, action, valid_actions)
+        action_list = valid_actions["actions_list"]
+        bet_range = valid_actions["bet_range"]
 
-        if not is_valid:
-            self._apply_fallback(player, fallback)
-            return
+        # Se l'azione richiesta non è disponibile o la bet è fuori range → FOLD
+        if action.action_type not in action_list:
+            action = Action(
+                action_type=PlayerAction.FOLD,
+                action_tensor=action.action_tensor,
+                observation=action.observation,
+                bet_amount=0.0,
+                bet_tensor=action.bet_tensor,
+            )
+        elif action.action_type is PlayerAction.BET:
+            out_of_range = not (
+                approx_lte(bet_range[0], action.bet_amount)
+                and approx_lte(action.bet_amount, bet_range[1])
+            )
+            if out_of_range or approx_gt(action.bet_amount, player.stack):
+                action = Action(
+                    action_type=PlayerAction.FOLD,
+                    action_tensor=action.action_tensor,
+                    observation=action.observation,
+                    bet_amount=0.0,
+                    bet_tensor=action.bet_tensor,
+                )
 
         if action.action_type is PlayerAction.FOLD:
             player.fold()
@@ -270,7 +292,6 @@ class Table(gym.Env):
             call_size = player.check_or_call(self.betting.bet_to_match)
             self.pot_mgr.add(call_size)
             if self.betting.bet_to_match == 0 or call_size == 0:
-                # Check
                 self.update_hand_log(
                     player.identifier,
                     PlayerAction.CALL.value,
@@ -285,7 +306,6 @@ class Table(gym.Env):
                     call_size / stack,
                     self.street_mgr.street,
                 )
-                # Show the total amount called (bet_to_match), not just the top-up
                 self.hh.write(
                     "%s: calls $%.2f and is all-in"
                     % (player.name, self.betting.bet_to_match * BB)
@@ -297,7 +317,6 @@ class Table(gym.Env):
                     call_size / stack,
                     self.street_mgr.street,
                 )
-                # Show the total amount called (bet_to_match), not just the top-up
                 self.hh.write(
                     "%s: calls $%.2f" % (player.name, self.betting.bet_to_match * BB)
                 )
@@ -335,51 +354,6 @@ class Table(gym.Env):
                 )
             self.betting.change_bet_to_match(total)
             self.betting.last_bet_placed_by = player
-
-        else:
-            raise Exception("Invalid action_type — use PlayerAction enum, not int")
-
-    def _apply_fallback(self, player, fallback: PlayerAction):
-        if fallback is PlayerAction.FOLD:
-            player.fold()
-            self.active_players -= 1
-            self.update_hand_log(
-                player.identifier, PlayerAction.FOLD.value, 0, self.street_mgr.street
-            )
-            self.hh.write("%s: folds" % player.name)
-        elif fallback is PlayerAction.CALL:
-            stack = player.stack
-            call_size = player.check_or_call(self.betting.bet_to_match)
-            self.pot_mgr.add(call_size)
-            if self.betting.bet_to_match == 0 or call_size == 0:
-                self.update_hand_log(
-                    player.identifier,
-                    PlayerAction.CALL.value,
-                    0,
-                    self.street_mgr.street,
-                )
-                self.hh.write("%s: checks" % player.name)
-            elif player.all_in:
-                self.update_hand_log(
-                    player.identifier,
-                    PlayerAction.CALL.value,
-                    call_size / stack,
-                    self.street_mgr.street,
-                )
-                self.hh.write(
-                    "%s: calls $%.2f and is all-in"
-                    % (player.name, self.betting.bet_to_match * BB)
-                )
-            else:
-                self.update_hand_log(
-                    player.identifier,
-                    PlayerAction.CALL.value,
-                    call_size / stack,
-                    self.street_mgr.street,
-                )
-                self.hh.write(
-                    "%s: calls $%.2f" % (player.name, self.betting.bet_to_match * BB)
-                )
 
     def _check_street_or_hand_over(self):
         # Players who can still voluntarily act

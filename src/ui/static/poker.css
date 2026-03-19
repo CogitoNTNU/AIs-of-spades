@@ -729,6 +729,58 @@ body {
   border-color: var(--gold);
 }
 
+.bet-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.bet-input {
+  flex: 1;
+  background: var(--felt);
+  border: 1px solid var(--gold-dim);
+  color: var(--gold);
+  padding: 10px 14px;
+  border-radius: var(--r-md);
+  font-family: "Playfair Display", serif;
+  font-size: 1.4rem;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+  width: 100%;
+  -moz-appearance: textfield;
+}
+.bet-input::-webkit-outer-spin-button,
+.bet-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}
+.bet-input:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px #c8a84b18;
+}
+
+.btn-step {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  background: var(--felt-light);
+  border: 1px solid var(--felt-rim);
+  color: var(--cream);
+  border-radius: var(--r-sm);
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-step:hover {
+  border-color: var(--gold-dim);
+  background: var(--felt-mid);
+  color: var(--gold);
+}
+
 /* Bet slider */
 .bet-slider-wrap {
   display: none;

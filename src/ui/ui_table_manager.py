@@ -532,6 +532,8 @@ def _build_table_update(obs: Observation, agents=None) -> dict:
     Build a table_update payload.
     If agents is provided, includes all_players with real names and seat numbers.
     """
+    n_table_cards = {0: 0, 1: 3, 2: 4, 3: 5}.get(int(obs.street), 0)
+
     payload = {
         "type": "table_update",
         "street": int(obs.street),
@@ -539,10 +541,8 @@ def _build_table_update(obs: Observation, agents=None) -> dict:
         "bet_to_match": float(obs.bet_to_match),
         "table_cards": [
             {"suit": int(c.suit), "rank": int(c.rank)}
-            for c in obs.table_cards.cards
-            if int(c.rank) > 0
+            for c in obs.table_cards.cards[:n_table_cards]
         ],
-        # Legacy field kept for compatibility
         "others": [
             {
                 "position": int(o.position),
