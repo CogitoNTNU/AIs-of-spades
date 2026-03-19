@@ -492,7 +492,7 @@ class Table(gym.Env):
         self.hh.write_showdown(self.players, self.evaluator, self.street_mgr.cards)
         self.hh.write_summary(
             self.players,
-            self.pot_mgr.pot,
+            self.pot_mgr.total_pot_for_hh,  # ← era pot_mgr.pot (sempre 0 dopo distribute)
             self.street_mgr.street,
             self.street_mgr.cards,
         )

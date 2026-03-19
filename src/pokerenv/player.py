@@ -23,7 +23,7 @@ class Player(ABC):
         self.pending_penalty = 0
         self.winnings = 0
         self.winnings_for_hh = 0
-        self.penalty = penalty
+        self.total_invested = 0
 
     def __lt__(self, other):
         return self.identifier < other.identifier
@@ -60,12 +60,14 @@ class Player(ABC):
             self.all_in = True
             self.bet_this_street += call_size
             self.money_in_pot += call_size
+            self.total_invested += call_size
             self.history.append({"action": PlayerAction.CALL, "value": call_size})
             return call_size
         else:
             self.stack -= amount
             self.bet_this_street += amount
             self.money_in_pot += amount
+            self.total_invested += amount
             self.history.append({"action": PlayerAction.CALL, "value": amount})
             return amount
 
@@ -85,6 +87,7 @@ class Player(ABC):
         self.stack -= amount
         self.bet_this_street += amount
         self.money_in_pot += amount
+        self.total_invested += amount
         self.history.append({"action": PlayerAction.BET, "value": amount})
         return amount
 
@@ -96,11 +99,6 @@ class Player(ABC):
         self.bet_this_street = 0
 
     def calculate_hand_rank(self, evaluator, community_cards):
-        # treys supports only 5, 6, or 7 cards total.
-        # If the board wasn't fully dealt (all-in before river), pad by dealing
-        # the remaining cards from a temporary deck — but the real fix is to run
-        # out the board in table.py before calling this.
-        # This guard prevents a hard crash in edge cases.
         all_cards = self.cards + community_cards
         if len(all_cards) < 5:
             raise ValueError(
@@ -123,10 +121,8 @@ class Player(ABC):
         self.pending_penalty = 0
         self.winnings = 0
         self.winnings_for_hh = 0
+        self.total_invested = 0
 
-    ########################################
-    #           Abstract Methods           #
-    ########################################
     @abstractmethod
     def get_action(self, observation: Observation) -> Action:
         pass
