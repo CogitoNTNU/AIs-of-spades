@@ -1,5 +1,6 @@
 # table_engine/hand_history_writer.py
 import time
+import os
 import numpy as np
 from treys import Card
 from pokerenv.common import GameState, PlayerState
@@ -25,6 +26,8 @@ class HandHistoryWriter:
         self.enabled = enabled
         self.track_single_player = track_single_player
         self.history = []
+        if self.enabled:
+            os.makedirs(self.location, exist_ok=True)
 
     def reset(self):
         self.history = []
@@ -149,6 +152,7 @@ class HandHistoryWriter:
         if not self.enabled or self.location is None or not self.history:
             return
         filepath = "%shandhistory_%s.txt" % (self.location, time.time())
+
         with open(filepath, "w") as f:
             for row in self.history:
                 f.writelines(row + "\n")

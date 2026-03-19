@@ -221,7 +221,8 @@ class UITableManager:
     async def _send_reconnect_state(self, websocket, seat: int):
         obs = self._last_obs.get(seat)
         if obs is not None:
-            payload = _build_table_update(obs)
+            agents = [self.players[i] for i in sorted(self.players)]
+            payload = _build_table_update(obs, agents)
             try:
                 await websocket.send(json.dumps(payload))
             except Exception:
@@ -252,13 +253,27 @@ class UITableManager:
             stack_low=self.stack_low,
             stack_high=self.stack_high,
             hand_history_location="hands/",
+            hand_history_enabled=True,
             invalid_action_penalty=0,
         )
         table.seed(None)
         table.reset()
 
+        # Track how many hh lines we've already pushed so we only push new ones
+        _hh_pushed: int = 0
+
+        def _push_new_hh_lines():
+            nonlocal _hh_pushed
+            history = table.hh.history
+            new_lines = history[_hh_pushed:]
+            if new_lines:
+                self._broadcast_sync({"type": "hand_log", "lines": new_lines})
+                _hh_pushed = len(history)
+
         for hand_index in range(self.total_hands):
             log.info("Hand %d / %d", hand_index + 1, self.total_hands)
+
+            _hh_pushed = 0  # Reset for each hand
 
             for agent in agents:
                 agent.new_hand()
@@ -266,9 +281,10 @@ class UITableManager:
             obs_array = table.reset_hand()
             obs = Observation(obs_array, table.hand_log)
 
-            self._broadcast_sync(_build_table_update(obs))
+            self._broadcast_sync(_build_table_update(obs, agents))
             self._broadcast_sync(_build_turn_indicator(obs, agents))
             self._broadcast_player_states(agents)
+            _push_new_hh_lines()
 
             rewards = np.zeros(n)
 
@@ -284,8 +300,6 @@ class UITableManager:
                 acting_agent = agents[acting_seat]
 
                 if acting_agent.state is not PlayerState.ACTIVE or acting_agent.all_in:
-                    # Il tavolo è in uno stato dove non c'è nessuno che può agire.
-                    # Forziamo la fine della mano chiamando _end_hand direttamente.
                     log.warning(
                         "Table asked inactive player %d — forcing _end_hand",
                         acting_seat,
@@ -300,11 +314,14 @@ class UITableManager:
                 action = acting_agent.get_action(obs)
                 obs_array, rewards, done = table.step(action)
 
+                # Push any new HH lines produced by this action
+                _push_new_hh_lines()
+
                 if done:
                     break
 
                 obs = Observation(obs_array, table.hand_log)
-                self._broadcast_sync(_build_table_update(obs))
+                self._broadcast_sync(_build_table_update(obs, agents))
                 self._broadcast_sync(_build_turn_indicator(obs, agents))
 
             # Broadcast board finale con community cards complete
@@ -322,6 +339,20 @@ class UITableManager:
                     "pot": float(table.pot_mgr.pot),
                     "bet_to_match": 0.0,
                     "table_cards": community,
+                    "all_players": [
+                        {
+                            "seat": i,
+                            "name": agents[i].name,
+                            "position": int(agents[i].position),
+                            "state": agents[i].state.value,
+                            "stack": float(agents[i].stack),
+                            "money_in_pot": float(agents[i].money_in_pot),
+                            "bet_this_street": float(agents[i].bet_this_street),
+                            "is_all_in": bool(agents[i].all_in),
+                        }
+                        for i in range(n)
+                    ],
+                    # Keep legacy "others" for compatibility
                     "others": [
                         {
                             "position": int(agents[i].position),
@@ -335,6 +366,9 @@ class UITableManager:
                     ],
                 }
             )
+
+            # Push final HH lines (showdown, summary)
+            _push_new_hh_lines()
 
             # Converti le carte dello showdown
             showdown = {}
@@ -382,11 +416,8 @@ class UITableManager:
         final_stacks = {a.name: float(a.stack) for a in agents}
         self._broadcast_sync(
             {
-                "type": "hand_result",
-                "rewards": reward_dict,
-                "showdown": showdown,
-                "players": final_players,
-                "table_cards": community,
+                "type": "game_over",
+                "final_stacks": final_stacks,
             }
         )
 
@@ -416,8 +447,6 @@ class UITableManager:
             if not player.is_connected or seat >= len(agents):
                 continue
             agent = agents[seat]
-            # Convert treys card ints → {suit, rank} using same encoding as
-            # CardObservation: suit = log2(bitmask), rank = get_rank_int()
             hand = []
             for c in agent.cards:
                 suit_bitmask = TreysCard.get_suit_int(c)
@@ -498,8 +527,12 @@ class UITableManager:
 # ---------------------------------------------------------------------------
 
 
-def _build_table_update(obs: Observation) -> dict:
-    return {
+def _build_table_update(obs: Observation, agents=None) -> dict:
+    """
+    Build a table_update payload.
+    If agents is provided, includes all_players with real names and seat numbers.
+    """
+    payload = {
         "type": "table_update",
         "street": int(obs.street),
         "pot": float(obs.pot),
@@ -509,6 +542,7 @@ def _build_table_update(obs: Observation) -> dict:
             for c in obs.table_cards.cards
             if int(c.rank) > 0
         ],
+        # Legacy field kept for compatibility
         "others": [
             {
                 "position": int(o.position),
@@ -521,6 +555,21 @@ def _build_table_update(obs: Observation) -> dict:
             for o in obs.others
         ],
     }
+    if agents is not None:
+        payload["all_players"] = [
+            {
+                "seat": i,
+                "name": a.name,
+                "position": int(a.position),
+                "state": a.state.value,
+                "stack": float(a.stack),
+                "money_in_pot": float(a.money_in_pot),
+                "bet_this_street": float(a.bet_this_street),
+                "is_all_in": bool(a.all_in),
+            }
+            for i, a in enumerate(agents)
+        ]
+    return payload
 
 
 def _build_turn_indicator(obs: Observation, agents) -> dict:

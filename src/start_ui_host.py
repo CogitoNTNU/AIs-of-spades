@@ -1,7 +1,9 @@
 import argparse
 
-from ui.ui_table_manager import UITableManager
+from nn import MODEL_CLASSES
 
+from ui.ui_table_manager import UITableManager
+from ui.ui_agent_player import AIPlayer
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Poker LAN server")
@@ -16,8 +18,14 @@ if __name__ == "__main__":
         "--ugo",
         metavar="WEIGHTS",
         default=None,
-        help="Percorso ai pesi di UGO (es. ui_weights/even_net/weights.pt). "
-        "Se omesso, tutti i seat sono umani.",
+        help="UGO's weights path (es. ui_weights/even_net/weights.pt). "
+        "If none all the seats are human",
+    )
+    parser.add_argument(
+        "--ugo-model",
+        default="EvenNet",
+        type=str,
+        help="Change the UGO's type of network [default EvenNet]",
     )
     args = parser.parse_args()
 
@@ -32,14 +40,12 @@ if __name__ == "__main__":
     )
 
     if args.ugo:
-        from nn.even_net import EvenNet
-        from ui.ui_agent_player import AIPlayer
-
+        model_class = MODEL_CLASSES[args.ugo_model]
         UGO_SEAT = 0
         manager.players[UGO_SEAT] = AIPlayer(
             seat=UGO_SEAT,
             name="UGO",
-            model_class=EvenNet,
+            model_class=model_class,
             weights_path=args.ugo,
         )
         manager._name_to_seat["ugo"] = UGO_SEAT

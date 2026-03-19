@@ -25,6 +25,7 @@ class Table(gym.Env):
         stack_low=50,
         stack_high=200,
         hand_history_location="hands/",
+        hand_history_enabled=False,
         invalid_action_penalty=0,
     ):
         self.action_space = gym.spaces.Tuple(
@@ -45,7 +46,7 @@ class Table(gym.Env):
         self.street_mgr = StreetManager()
         self.hh = HandHistoryWriter(
             location=hand_history_location,
-            enabled=False,
+            enabled=hand_history_enabled,
             track_single_player=track_single_player,
         )
 

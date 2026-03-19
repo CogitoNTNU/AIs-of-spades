@@ -51,15 +51,18 @@ function handle(msg) {
     }
 
     case "player_state":
-      // Sent right after reset_hand so every player sees their cards + stack
-      // before their turn arrives.
       show("screen-game");
       renderHandCards(msg.hand_cards || []);
-      if (msg.stack !== undefined)
+      // Update self-cache so the player grid shows our current stack
+      if (myPlayerCache === null) myPlayerCache = {};
+      if (msg.stack !== undefined) {
+        myPlayerCache.stack = msg.stack;
         document.getElementById("my-stack").textContent = fmt(msg.stack);
+      }
       break;
 
     case "table_update":
+      if (msg.all_players) allPlayersCache = msg.all_players;
       applyTableUpdate(msg);
       break;
 
@@ -85,17 +88,13 @@ function handle(msg) {
       );
       disableActions();
       break;
-      
-    case "game_over":
-      showGameOver(msg.final_stacks);
+
+    case "hand_log":
+      appendHandLog(msg.lines || []);
       break;
 
-    case "hand_result":
-      handNumber++;
-      document.getElementById("tb-hand").textContent =
-        `${handNumber} / ${totalHands}`;
-      showHandResult(msg.rewards, msg.showdown || {}); // ← aggiungi msg.showdown
-      disableActions();
+    case "game_over":
+      showGameOver(msg.final_stacks || {});
       break;
 
     case "error":
@@ -107,6 +106,7 @@ function handle(msg) {
 
 /** Full update when it's this player's turn to act. */
 function _applyYourTurn(obs) {
+  // Update own stats panel
   document.getElementById("pot-value").textContent = fmt(obs.pot);
   document.getElementById("to-call-value").textContent = fmt(obs.bet_to_match);
   document.getElementById("street-name").textContent =
@@ -117,17 +117,64 @@ function _applyYourTurn(obs) {
     obs.bet_this_street,
   );
 
+  // Keep myPlayerCache in sync so the grid shows our live stats
+  if (!myPlayerCache) myPlayerCache = { seat: mySeat, name: myName };
+  myPlayerCache.stack = obs.player_stack;
+  myPlayerCache.money_in_pot = obs.player_money_in_pot;
+  myPlayerCache.bet_this_street = obs.bet_this_street;
+  myPlayerCache.state = 1; // ACTIVE (it's our turn)
+
   renderCommunityCards(obs.table_cards || []);
   renderHandCards(obs.hand_cards || []);
-  renderOthers(obs.others || []);
+
+  // Merge live stats from obs.others into allPlayersCache (which has names),
+  // then inject our own updated entry so the grid shows all players including self.
+  if (allPlayersCache) {
+    const merged = allPlayersCache.map((p) => {
+      if (p.seat === mySeat) {
+        // Use our own live data from the observation
+        return { ...p, ...myPlayerCache };
+      }
+      // obs.others is relative to the acting player — match by position
+      const other = obs.others.find((o) => o.position === p.position);
+      if (!other) return p;
+      return {
+        ...p,
+        state: other.state,
+        stack: other.stack,
+        money_in_pot: other.money_in_pot,
+        bet_this_street: other.bet_this_street,
+        is_all_in: other.is_all_in,
+      };
+    });
+    renderOthers(merged, null);
+  } else {
+    renderOthers(null, obs.others || []);
+  }
 
   const banner = document.getElementById("turn-banner");
   banner.textContent = "⬡  YOUR TURN";
   banner.classList.add("your-turn");
 
+  // ── Enable action buttons ONLY when it's genuinely our turn ──
   applyActionButtons(obs);
 
   addLog(
-    `<span class="gold">⬡ Your turn</span> — street: <b>${STREETS[obs.street]}</b>, pot: <b>${fmt(obs.pot)}</b>, to call: <b>${fmt(obs.bet_to_match)}</b>`,
+    `<span class="gold">⬡ Your turn</span> — street: <b>${STREETS[obs.street]}</b>, ` +
+      `pot: <b>${fmt(obs.pot)}</b>, to call: <b>${fmt(obs.bet_to_match)}</b>`,
   );
+}
+
+/**
+ * Append real hand-history lines from the server's hh.history to the log panel.
+ */
+function appendHandLog(lines) {
+  lines.forEach((line) => {
+    if (!line) return;
+    const formatted = esc(line)
+      .replace(/(raises|bets|calls|folds|checks)/g, "<b>$1</b>")
+      .replace(/\*\*\* ([^*]+) \*\*\*/g, '<span class="gold">*** $1 ***</span>')
+      .replace(/collected \$[\d.]+/g, (m) => `<span class="win">${m}</span>`);
+    addLog(formatted);
+  });
 }

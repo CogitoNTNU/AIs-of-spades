@@ -1052,3 +1052,94 @@ input[type="range"].bet-slider::-moz-range-thumb {
     min-width: unset;
   }
 }
+
+
+/* ─────────────────────────────────────────────────
+
+/* Player card: show self with a subtle gold border */
+.player-card.self {
+  border-color: var(--gold-dim);
+  background: #0e2010;
+}
+
+/* Header layout: left cluster (turn # + name) and right cluster (badges) */
+.pc-left {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* Circular turn-order number */
+.pc-turn-badge {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--felt-rim);
+  border: 1px solid #2a4a2c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+/* Highlight the badge of the currently acting player */
+.player-card.acting .pc-turn-badge {
+  background: var(--gold-dim);
+  border-color: var(--gold);
+  color: #1a0e00;
+}
+
+/* Position badge: SB / BB / UTG / BTN */
+.pos-badge {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.52rem;
+  letter-spacing: 1.5px;
+  padding: 2px 6px;
+  border-radius: 20px;
+  border: 1px solid;
+  text-transform: uppercase;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* Right side of pc-header */
+.pc-badges {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+/* "YOU" tag inside player name */
+.you-tag {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.5rem;
+  letter-spacing: 2px;
+  color: var(--gold);
+  background: #2a1e00;
+  border: 1px solid var(--gold-dim);
+  border-radius: 10px;
+  padding: 1px 5px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* Keep pc-header from overflowing on small cards */
+.pc-header {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.pc-name {
+  max-width: 90px; /* slightly tighter to fit badges */
+}
+
+/* Pot unit line — show BB = $5 */
+.pot-unit::after {
+  content: '  (1 BB = $5)';
+  opacity: 0.5;
+  font-size: 0.5rem;
+}
