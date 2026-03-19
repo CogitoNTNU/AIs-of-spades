@@ -17,8 +17,6 @@ class WeightManager:
 
         self.snapshots: list[dict] = []
         self.cache: dict[str, PokerNet] = {}
-
-        self._model_dir.mkdir(parents=True, exist_ok=True)
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------

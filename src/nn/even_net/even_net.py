@@ -150,13 +150,13 @@ class EvenNet(PokerNet):
 
         hand_state = (
             self._hand_state
-            if network_internal_state_hand == None
+            if network_internal_state_hand is None
             else network_internal_state_hand
         )
 
         game_state = (
             self._game_state
-            if network_internal_state_game == None
+            if network_internal_state_game is None
             else network_internal_state_game
         )
 

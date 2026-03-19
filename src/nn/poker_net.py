@@ -41,15 +41,6 @@ class PokerNet(nn.Module, ABC):
         """
         pass
 
-    @abstractmethod
-    def new_hand(self) -> None:
-        """
-        Must return:
-            - action_logits
-            - value
-        """
-        pass
-
     # @abstractmethod
     # def signal_hand_end(self):
     #     """

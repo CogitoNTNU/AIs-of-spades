@@ -5,7 +5,7 @@ import gymnasium as gym
 from treys import Evaluator, Card
 from pokerenv.common import PlayerState, PlayerAction, TablePosition
 from pokerenv.action import Action
-from pokerenv.observation import Observation
+from pokerenv.player import Player
 from pokerenv.table_engine import (
     BettingManager,
     PotManager,
@@ -32,10 +32,10 @@ class Table(gym.Env):
         self.action_space = gym.spaces.Tuple(
             (gym.spaces.Discrete(4), gym.spaces.Box(-math.inf, math.inf, (1, 1)))
         )
-        self.observation_space = gym.spaces.Box(-math.inf, math.inf, (59, 1))
+        self.observation_space = gym.spaces.Box(-math.inf, math.inf, (58, 1))
 
         self.n_players = n_players
-        self.players = players
+        self.players: list[Player] = players
         self.stack_low = stack_low
         self.stack_high = stack_high
 
@@ -209,7 +209,7 @@ class Table(gym.Env):
 
         if self.hand_is_over:
             self._end_hand()
-            obs = np.zeros(59, dtype=np.float32)
+            obs = np.zeros(58, dtype=np.float32)
         else:
             obs = self._get_observation(self.players[self.next_player_i])
 
@@ -227,7 +227,7 @@ class Table(gym.Env):
     # ------------------------------------------------------------------
 
     def _post_blinds(self):
-        for player in self.players:
+        for player in sorted(self.players, key=lambda p: p.position):
             if player.state is PlayerState.OUT:
                 continue
 
@@ -244,8 +244,8 @@ class Table(gym.Env):
                 amount = min(1, player.stack)
                 if amount > 0:
                     self.pot_mgr.add(player.bet(amount))
-                    self.betting.bet_to_match = amount
-                    self.betting.minimum_raise = amount
+                    self.betting.change_bet_to_match(amount)  # ← coerente, minimum_raise = 0.5
+                    self.betting.minimum_raise = amount        # ← forza a 1 BB esatto
                     self.betting.last_bet_placed_by = player
                     self.hh.write(
                         "%s: posts big blind $%.2f" % (player.name, amount * BB)
@@ -407,21 +407,28 @@ class Table(gym.Env):
             self._do_street_transition(transition_to_end=(len(players_can_act) == 0))
 
     def _advance_next_player(self):
-        after = [
+        current_pos = self.players[self.current_player_i].position
+
+        # Candidati: attivi, non all-in, diversi dal corrente
+        candidates = [
             i
             for i in range(self.n_players)
-            if i > self.current_player_i
-            and self.players[i].state is PlayerState.ACTIVE
+            if self.players[i].state is PlayerState.ACTIVE
             and not self.players[i].all_in
+            and i != self.current_player_i
         ]
-        before = [
-            i
-            for i in range(self.n_players)
-            if i <= self.current_player_i
-            and self.players[i].state is PlayerState.ACTIVE
-            and not self.players[i].all_in
-        ]
-        self.next_player_i = min(after) if after else min(before)
+
+        if not candidates:
+            return
+
+        after = [i for i in candidates if self.players[i].position > current_pos]
+        before = [i for i in candidates if self.players[i].position <= current_pos]
+
+        self.next_player_i = (
+            min(after, key=lambda i: self.players[i].position)
+            if after
+            else min(before, key=lambda i: self.players[i].position)
+        )
 
     def _do_street_transition(self, transition_to_end=False):
         active_can_act = [
@@ -473,40 +480,40 @@ class Table(gym.Env):
         self.hh.flush_to_disk()
 
     def _get_observation(self, player):
-        observation = np.zeros(59, dtype=np.float32)
+        observation = np.zeros(58, dtype=np.float32)
         observation[0] = player.identifier
 
         valid_actions = self.betting.get_valid_actions(player, self.players)
         for action in valid_actions["actions_list"]:
             observation[action.value + 1] = 1
-        observation[5] = valid_actions["bet_range"][0]
-        observation[6] = valid_actions["bet_range"][1]
+        observation[4] = valid_actions["bet_range"][0]
+        observation[5] = valid_actions["bet_range"][1]
 
-        observation[7] = player.position
-        observation[8] = Card.get_suit_int(player.cards[0])
-        observation[9] = Card.get_rank_int(player.cards[0])
-        observation[10] = Card.get_suit_int(player.cards[1])
-        observation[11] = Card.get_rank_int(player.cards[1])
-        observation[12] = player.stack
-        observation[13] = player.money_in_pot
-        observation[14] = player.bet_this_street
+        observation[6] = player.position
+        observation[7] = Card.get_suit_int(player.cards[0])
+        observation[8] = Card.get_rank_int(player.cards[0])
+        observation[9] = Card.get_suit_int(player.cards[1])
+        observation[10] = Card.get_rank_int(player.cards[1])
+        observation[11] = player.stack
+        observation[12] = player.money_in_pot
+        observation[13] = player.bet_this_street
 
-        observation[15] = self.street_mgr.street
+        observation[14] = self.street_mgr.street
         for i, card in enumerate(self.street_mgr.cards):
-            observation[16 + (i * 2)] = Card.get_suit_int(card)
-            observation[17 + (i * 2)] = Card.get_rank_int(card)
-        observation[26] = self.pot_mgr.pot
-        observation[27] = self.betting.bet_to_match
-        observation[28] = self.betting.minimum_raise
+            observation[15 + (i * 2)] = Card.get_suit_int(card)
+            observation[16 + (i * 2)] = Card.get_rank_int(card)
+        observation[25] = self.pot_mgr.pot
+        observation[26] = self.betting.bet_to_match
+        observation[27] = self.betting.minimum_raise
 
         others = [other for other in self.players if other is not player]
         for i, other in enumerate(others):
-            observation[29 + i * 6] = other.position
-            observation[30 + i * 6] = other.state.value
-            observation[31 + i * 6] = other.stack
-            observation[32 + i * 6] = other.money_in_pot
-            observation[33 + i * 6] = other.bet_this_street
-            observation[34 + i * 6] = int(other.all_in)
+            observation[28 + i * 6] = other.position
+            observation[29 + i * 6] = other.state.value
+            observation[30 + i * 6] = other.stack
+            observation[31 + i * 6] = other.money_in_pot
+            observation[32 + i * 6] = other.bet_this_street
+            observation[33 + i * 6] = int(other.all_in)
 
         return observation
 
