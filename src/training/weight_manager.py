@@ -3,7 +3,7 @@ import torch
 from pathlib import Path
 from typing import Optional
 
-from src.nn.poker_net import PokerNet
+from nn.poker_net import PokerNet
 
 
 class WeightManager:
@@ -17,6 +17,7 @@ class WeightManager:
 
         self.snapshots: list[dict] = []
         self.cache: dict[str, PokerNet] = {}
+        self._model_dir.mkdir(parents=True, exist_ok=True)
         self.models_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------

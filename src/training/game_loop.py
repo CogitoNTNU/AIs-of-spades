@@ -55,6 +55,11 @@ class Game:
             raise Exception("Table should not be None")
 
         for hand_index in range(total_hands):
+            # End the game early if fewer than 2 players have chips to play.
+            players_with_chips = sum(1 for a in self.agents if a.stack >= 1)
+            if players_with_chips < 2:
+                break
+
             for agent in self.agents:
                 agent.new_hand()
 

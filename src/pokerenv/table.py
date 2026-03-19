@@ -244,8 +244,10 @@ class Table(gym.Env):
                 amount = min(1, player.stack)
                 if amount > 0:
                     self.pot_mgr.add(player.bet(amount))
-                    self.betting.change_bet_to_match(amount)  # ← coerente, minimum_raise = 0.5
-                    self.betting.minimum_raise = amount        # ← forza a 1 BB esatto
+                    self.betting.change_bet_to_match(
+                        amount
+                    )  # ← coerente, minimum_raise = 0.5
+                    self.betting.minimum_raise = amount  # ← forza a 1 BB esatto
                     self.betting.last_bet_placed_by = player
                     self.hh.write(
                         "%s: posts big blind $%.2f" % (player.name, amount * BB)
@@ -266,6 +268,15 @@ class Table(gym.Env):
                 bet_tensor=action.bet_tensor,
             )
         elif action.action_type is PlayerAction.BET:
+            clamped = float(np.clip(action.bet_amount, bet_range[0], bet_range[1]))
+            clamped = min(clamped, player.stack)
+            action = Action(
+                action_type=action.action_type,
+                action_tensor=action.action_tensor,
+                observation=action.observation,
+                bet_amount=clamped,
+                bet_tensor=action.bet_tensor,
+            )
             out_of_range = not (
                 approx_lte(bet_range[0], action.bet_amount)
                 and approx_lte(action.bet_amount, bet_range[1])
