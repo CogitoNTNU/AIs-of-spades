@@ -1,8 +1,8 @@
 import os
 import argparse
-import wandb
 from training.learning_loop import LearningLoop
 from training.weight_manager import WeightManager
+from training.wandb_compat import wandb
 from nn import MODEL_CLASSES
 import yaml
 
