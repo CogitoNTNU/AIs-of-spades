@@ -25,6 +25,7 @@ class Player(ABC):
         self.winnings_for_hh = 0
         self.total_invested = 0
         self.penalty = penalty
+        self.starting_stack = 0
 
     def __lt__(self, other):
         return self.identifier < other.identifier
@@ -45,6 +46,10 @@ class Player(ABC):
         self.acted_this_street = True
         self.state = PlayerState.FOLDED
         self.history.append({"action": PlayerAction.FOLD, "value": 0})
+
+    def set_stack(self, new_stack):
+        self.stack = new_stack
+        self.starting_stack = new_stack
 
     def _check(self):
         self.has_acted = True
