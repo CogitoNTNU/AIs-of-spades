@@ -83,7 +83,7 @@ class Observation:
     @staticmethod
     def empty():
         obs_array = np.zeros(58, dtype=np.float32)
-        hand_log = np.full((32, 4), -1.0, dtype=np.float32)
+        hand_log = np.full((64, 8), -1.0, dtype=np.float32)
         return Observation(obs_array, hand_log)
 
     def __str__(self) -> str:
