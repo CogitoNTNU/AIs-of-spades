@@ -68,10 +68,20 @@ function handle(msg) {
         _updateMyStatsFromAllPlayers(msg.all_players);
       }
       applyTableUpdate(msg);
+      if (
+        document.getElementById("screen-spectator").style.display !== "none"
+      ) {
+        applySpectatorTableUpdate(msg);
+      }
       break;
 
     case "turn_indicator":
       renderTurnBanner(msg.seat, msg.name);
+      if (
+        document.getElementById("screen-spectator").style.display !== "none"
+      ) {
+        renderSpectatorTurnBanner(msg.seat, msg.name);
+      }
       break;
 
     case "your_turn":
@@ -104,6 +114,14 @@ function handle(msg) {
     case "error":
       setJoinError(msg.message);
       addLog(`⚠ ${msg.message}`);
+      break;
+
+    case "spectator_init":
+      initSpectator(msg);
+      break;
+
+    case "leaderboard_update":
+      renderLeaderboard(msg.stacks || {});
       break;
   }
 }

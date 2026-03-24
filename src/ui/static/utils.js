@@ -24,7 +24,7 @@ function esc(s) {
 
 /** Switch between the three top-level screens. */
 function show(id) {
-  ["screen-join", "screen-lobby", "screen-game"].forEach(
+  ["screen-join", "screen-lobby", "screen-game", "screen-spectator"].forEach(
     (s) => (document.getElementById(s).style.display = "none"),
   );
   document.getElementById(id).style.display = "flex";
