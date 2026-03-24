@@ -6,12 +6,12 @@ import torch
 import torch.optim as optim
 import torch.distributions as D
 import torch.multiprocessing as mp
-import wandb
 
 from nn.poker_net import PokerNet
 from pokerenv.common import PlayerAction
 from training.game_loop import Game
 from training.weight_manager import WeightManager
+from training.wandb_compat import wandb
 
 
 # ---------------------------------------------------------------------------

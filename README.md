@@ -40,7 +40,7 @@ For example: OS version, programs, libraries, etc.
 -->
 
 - **Git**: Ensure that git is installed on your machine. [Download Git](https://git-scm.com/downloads)
-- **Python 3.12**: Required for the project. [Download Python](https://www.python.org/downloads/)
+- **Python 3.12**: Required for the project. The repository is pinned to Python 3.12 because some compiled dependencies do not yet build on Python 3.14. [Download Python](https://www.python.org/downloads/)
 - **UV**: Used for managing Python environments. [Install UV](https://docs.astral.sh/uv/getting-started/installation/)
 - **Docker** (optional): For DevContainer development. [Download Docker](https://www.docker.com/products/docker-desktop)
 
@@ -60,6 +60,12 @@ For example: OS version, programs, libraries, etc.
 
    ```sh
    uv sync
+   ```
+
+   If you want to run the training entrypoint with Weights & Biases logging enabled, install the optional training group too:
+
+   ```sh
+   uv sync --group train
    ```
 
 <!--

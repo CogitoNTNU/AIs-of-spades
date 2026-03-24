@@ -3,7 +3,7 @@ name = "PROJECT-TEMPLATE"
 version = "0.0.1"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 license-files = ["LICENSE"]
 dependencies = [
     "uv",
@@ -14,7 +14,6 @@ dependencies = [
     "torch>=2.10.0",
     "scipy>=1.17.1",
     "gymnasium>=1.2.3",
-    "wandb>=0.25.0",
     "websockets>=16.0",
 ]
 
@@ -36,6 +35,10 @@ docs = [
     "mkdocs-material>=9.6.16",
     "mkdocstrings>=0.30.0",
     "mkdocstrings-python>=1.16.12",
+]
+
+train = [
+    "wandb>=0.25.0",
 ]
 
 [tool.commitizen]
