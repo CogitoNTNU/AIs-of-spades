@@ -13,4 +13,7 @@ learning_loop:
   save_interval: 100
   save_every: 20
   checkpoint_dir: "res/checkpoint"
-  num_workers: 8             
+  num_workers: 8
+  diversity_coef: 0.1
+  diversity_lo: 0.01  
+  diversity_hi: 0.99  
