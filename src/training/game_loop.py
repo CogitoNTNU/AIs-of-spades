@@ -12,7 +12,6 @@ MAIN_CHARACTER_NAME = "UGO"
 
 
 class Game:
-
     def __init__(self, opponents: list, current_model):
         self.opponents = opponents  # list of 5 pre-built models
         self.current_model = current_model

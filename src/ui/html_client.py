@@ -30,6 +30,7 @@ _JS_MODULES = [
     "state.js",
     "utils.js",
     "render.js",
+    "spectator.js",
     "actions.js",
     "overlays.js",
     "network.js",
@@ -37,13 +38,12 @@ _JS_MODULES = [
 
 
 def _build_template() -> str:
-    static    = _HERE / "static"
+    static = _HERE / "static"
     templates = _HERE / "templates"
 
     css = (static / "poker.css").read_text(encoding="utf-8")
-    js  = "\n\n".join(
-        (static / name).read_text(encoding="utf-8")
-        for name in _JS_MODULES
+    js = "\n\n".join(
+        (static / name).read_text(encoding="utf-8") for name in _JS_MODULES
     )
     html = (templates / "index.html").read_text(encoding="utf-8")
 

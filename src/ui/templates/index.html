@@ -195,10 +195,17 @@
             id="bet-input"
             class="bet-input"
             type="number"
-            min="0" max="9999" step="0.25"
+            min="0"
+            max="9999"
+            step="0.25"
             value="0"
             oninput="syncBetInput()"
-            onblur="_clampBetInput(); _syncBetDisplay(parseFloat(document.getElementById('bet-input').value))"
+            onblur="
+              _clampBetInput();
+              _syncBetDisplay(
+                parseFloat(document.getElementById('bet-input').value),
+              );
+            "
           />
 
           <div id="bet-presets" class="bet-presets"></div>
@@ -238,6 +245,85 @@
         </button>
       </div>
     </div>
+    <div
+      id="screen-spectator"
+      class="screen"
+      style="display: none; flex-direction: column; align-items: center"
+    >
+      <!-- Topbar -->
+      <div class="sp-topbar" style="width: 100%; max-width: 820px">
+        <div class="sp-topbar-logo">POKER</div>
+        <div class="sp-badge">● LIVE SPECTATOR</div>
+        <div
+          class="sp-badge"
+          style="border-color: var(--gold-dim); color: var(--gold-dim)"
+        >
+          VIEWING ONLY
+        </div>
+      </div>
+
+      <!-- Notice -->
+      <div class="sp-notice" style="width: 100%; max-width: 820px">
+        Game in progress — you are watching as a spectator. Your hole cards are
+        hidden.
+      </div>
+
+      <!-- Turn banner -->
+      <div
+        id="sp-turn-banner"
+        class="sp-turn-banner"
+        style="width: 100%; max-width: 820px"
+      >
+        Waiting for next action…
+      </div>
+
+      <!-- Main content -->
+      <div class="sp-main-row" style="width: 100%; max-width: 820px">
+        <!-- Left column: table -->
+        <div class="sp-table-col">
+          <!-- Community cards -->
+          <div class="panel sp-community-panel">
+            <div class="panel-title">Community Cards</div>
+            <div class="sp-community-cards" id="sp-community-cards">
+              <div class="card-placeholder">·</div>
+              <div class="card-placeholder">·</div>
+              <div class="card-placeholder">·</div>
+              <div class="card-placeholder">·</div>
+              <div class="card-placeholder">·</div>
+            </div>
+          </div>
+
+          <!-- Pot -->
+          <div class="panel sp-pot-panel">
+            <div class="sp-pot-item">
+              <div class="topbar-label">Pot</div>
+              <div class="pot-number" id="sp-pot-value">—</div>
+            </div>
+            <div class="sp-pot-item">
+              <div class="topbar-label">Street</div>
+              <div class="topbar-value" id="sp-street-name">—</div>
+            </div>
+          </div>
+
+          <!-- Players -->
+          <div class="panel sp-players-panel">
+            <div class="panel-title">Players</div>
+            <div id="sp-players-grid"></div>
+          </div>
+        </div>
+        <!-- /sp-table-col -->
+
+        <!-- Right column: leaderboard -->
+        <div class="sp-side-col">
+          <div class="panel sp-leaderboard-panel">
+            <div class="sp-leaderboard-title">Leaderboard</div>
+            <div id="sp-leaderboard-rows"></div>
+          </div>
+        </div>
+      </div>
+      <!-- /sp-main-row -->
+    </div>
+    <!-- /screen-spectator -->
 
     <script>
       {{JS}}

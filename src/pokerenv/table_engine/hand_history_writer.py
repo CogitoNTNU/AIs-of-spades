@@ -78,14 +78,7 @@ class HandHistoryWriter:
             return
         for player in players:
             if self.track_single_player or player.identifier == 0:
-                self.history.append(
-                    "Dealt to %s [%s %s]"
-                    % (
-                        player.name,
-                        Card.int_to_str(player.cards[0]),
-                        Card.int_to_str(player.cards[1]),
-                    )
-                )
+                self.history.append("Dealt to %s" % (player.name))
 
     def write_showdown(self, players: list, evaluator, community_cards: list):
         if not self.enabled:
