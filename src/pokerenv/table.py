@@ -95,7 +95,7 @@ class Table(gym.Env):
             player.reset()
             player.position = i
             player.cards = [initial_draw[i], initial_draw[i + self.n_players]]
-            player.stack = self.rng.integers(self.stack_low, self.stack_high, 1)[0]
+            player.set_stack(self.rng.integers(self.stack_low, self.stack_high, 1)[0])
 
         self.dealer_position = 0
 
