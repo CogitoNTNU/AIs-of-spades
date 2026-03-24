@@ -98,3 +98,9 @@ class WeightManager:
         if not self.snapshots:
             return None
         return self._sample_snapshot()["state_dict"]["model_state_dict"]
+
+    def get_current_model(self) -> PokerNet:
+        """Return the most recently saved model, or a fresh one if no snapshots exist."""
+        if not self.snapshots:
+            return self.model_class()
+        return self.load(self.snapshots[-1]["path"])

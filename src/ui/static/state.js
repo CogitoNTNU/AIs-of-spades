@@ -8,6 +8,7 @@ let myName = "";
 let currentObs = null;
 let totalHands = 20;
 let handNumber = 0;
+let isSpectator = false;
 
 // Cache of the last all_players array received from the server.
 // Updated on every table_update that includes all_players.

@@ -14,18 +14,13 @@
  * the initial state snapshot.
  */
 function initSpectator(msg) {
-  console.log(JSON.stringify(msg))
+  isSpectator = true; 
   show("screen-spectator");
 
   if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
-
-  if (msg.table_update) {
-    applySpectatorTableUpdate(msg.table_update);
-  }
-
-  if (msg.turn_indicator) {
+  if (msg.table_update) applySpectatorTableUpdate(msg.table_update);
+  if (msg.turn_indicator)
     renderSpectatorTurnBanner(msg.turn_indicator.seat, msg.turn_indicator.name);
-  }
 }
 
 /* ─── Table update (community cards + players) ─── */
@@ -142,7 +137,8 @@ function renderLeaderboard(stacks) {
   container.innerHTML = sorted
     .map(([name, stack], i) => {
       const pct = Math.round((stack / maxStack) * 100);
-      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`;
+      const medal =
+        i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`;
       return `
         <div class="lb-row" style="animation-delay:${i * 60}ms">
           <div class="lb-rank">${medal}</div>
@@ -162,8 +158,22 @@ function renderLeaderboard(stacks) {
 /* ─── Helper: build a single face-down or visible card ─ */
 
 function buildCard(c) {
-  const RANKS = ["2","3","4","5","6","7","8","9","T","J","Q","K","A"];
-  const SUITS_SYM = ["♠","♥","♦","♣"];
+  const RANKS = [
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "T",
+    "J",
+    "Q",
+    "K",
+    "A",
+  ];
+  const SUITS_SYM = ["♠", "♥", "♦", "♣"];
   const isRed = c.suit === 1 || c.suit === 2;
 
   const rank = RANKS[c.rank] ?? "?";
@@ -197,8 +207,18 @@ function _badgeClass(state, allIn) {
   return "badge-active";
 }
 function _posLabel(pos) {
-  return ["BTN","SB","BB","UTG","UTG+1","MP","CO"][pos] ?? "";
+  return ["BTN", "SB", "BB", "UTG", "UTG+1", "MP", "CO"][pos] ?? "";
 }
 function _posColor(pos) {
-  return ["#c8a84b","#3ab860","#50a0e8","#e05050","#e07030","#b860e0","#e0c030"][pos] ?? "#aaa";
+  return (
+    [
+      "#c8a84b",
+      "#3ab860",
+      "#50a0e8",
+      "#e05050",
+      "#e07030",
+      "#b860e0",
+      "#e0c030",
+    ][pos] ?? "#aaa"
+  );
 }

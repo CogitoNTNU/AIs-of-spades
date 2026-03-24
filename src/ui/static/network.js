@@ -60,26 +60,23 @@ function handle(msg) {
       break;
 
     case "table_update":
-      // Cache all_players
       if (msg.all_players) {
         allPlayersCache = msg.all_players;
-        // Also update own stats from all_players so "Your Position" panel
-        // stays current even when it's not our turn
         _updateMyStatsFromAllPlayers(msg.all_players);
       }
-      applyTableUpdate(msg);
-      if (
-        document.getElementById("screen-spectator").style.display !== "none"
-      ) {
+      if (!isSpectator) {
+        applyTableUpdate(msg);
+      }
+      if (isSpectator) {
         applySpectatorTableUpdate(msg);
       }
       break;
 
     case "turn_indicator":
-      renderTurnBanner(msg.seat, msg.name);
-      if (
-        document.getElementById("screen-spectator").style.display !== "none"
-      ) {
+      if (!isSpectator) {
+        renderTurnBanner(msg.seat, msg.name);
+      }
+      if (isSpectator) {
         renderSpectatorTurnBanner(msg.seat, msg.name);
       }
       break;
