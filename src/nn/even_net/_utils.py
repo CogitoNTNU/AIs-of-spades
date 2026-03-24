@@ -16,7 +16,7 @@ def preprocess_observation(
 
     Returns:
         cards: [4, 4, 13] tensor
-        bets: [128] tensor (flattened hand log)
+        bets: [64 * 8] tensor (flattened hand log)
     """
 
     # --------- CARDS ---------

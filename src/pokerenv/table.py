@@ -61,7 +61,8 @@ class Table(gym.Env):
         self.first_to_act = None
 
         self.hand_number = 0
-        self.hand_log = np.full((32, 4), -1.0)
+        self.hand_log_shape = (64, 8)
+        self.hand_log = np.full(self.hand_log_shape, -1.0)
 
         self.dealer_position = 0
         self.showdown_cards: dict = {}
@@ -81,7 +82,7 @@ class Table(gym.Env):
         self.street_finished = False
         self.hand_is_over = False
 
-        self.hand_log = np.full((32, 4), -1.0)
+        self.hand_log = np.full(self.hand_log_shape, -1.0)
         self.hand_number = 0
 
         # Reset managers
@@ -169,7 +170,6 @@ class Table(gym.Env):
         # New episode → reset dealer + stacks
         self.dealer_position = 0
         return self._start_new_hand(reset_stacks=True)
-
 
     def reset_hand(self):
         # Same episode → rotate dealer, keep stacks
@@ -528,13 +528,16 @@ class Table(gym.Env):
         return observation
 
     def update_hand_log(self, player_id, action_value, bet_fraction, street):
+        hand_log_line = np.zeros(self.hand_log_shape[-1])
+        hand_log_line[:4] = [
+            player_id,
+            action_value,
+            bet_fraction,
+            street,
+        ]
+
         if self.hand_number < self.hand_log.shape[0]:
-            self.hand_log[self.hand_number] = [
-                player_id,
-                action_value,
-                bet_fraction,
-                street,
-            ]
+            self.hand_log[self.hand_number] = hand_log_line
         else:
             self.hand_log = np.roll(self.hand_log, -1, axis=0)
-            self.hand_log[-1] = [player_id, action_value, bet_fraction, street]
+            self.hand_log[-1] = hand_log_line
