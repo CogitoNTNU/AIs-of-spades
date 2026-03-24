@@ -188,8 +188,12 @@ class SimoNet(PokerNet):
         opp_mask = _to(p.opp_mask).unsqueeze(0)  # [1, 5]
 
         # Use replayed internal state if this is a training replay
-        hand_state = p.hand_state if p.hand_state is not None else self._hand_state
-        game_state = p.game_state if p.game_state is not None else self._game_state
+        hand_state = (
+            p.hand_state.to(device) if p.hand_state is not None else self._hand_state
+        )
+        game_state = (
+            p.game_state.to(device) if p.game_state is not None else self._game_state
+        )
 
         # Store internal state into observation for trajectory logging
         observation.add_network_internal_state(
