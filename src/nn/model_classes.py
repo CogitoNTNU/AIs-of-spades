@@ -1,4 +1,5 @@
 from nn.even_net import EvenNet
+from nn.dani_net import DaniNet
 
 
 def list_models():
@@ -7,4 +8,5 @@ def list_models():
 
 MODEL_CLASSES = {
     "EvenNet": EvenNet,
+    "DaniNet": DaniNet,
 }
