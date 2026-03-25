@@ -44,17 +44,16 @@ _MAX_OPPONENTS = 5
 def _worker_init(model_class):
     global _worker_model, _worker_model_class, _worker_opponents
 
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
+
     _worker_model_class = model_class
     _worker_model = _build_model(model_class)
-
-    # Pre-allocate all opponent slots upfront.  Dynamic sampling still works:
-    # each game receives fresh state_dicts chosen by WeightManager; we only
-    # avoid re-instantiating the nn.Module objects.
     _worker_opponents = [_build_model(model_class) for _ in range(_MAX_OPPONENTS)]
 
     print(
         f"[worker {os.getpid()}] init complete — "
-        f"main model + {_MAX_OPPONENTS} opponent slots allocated",
+        f"threads=1  main model + {_MAX_OPPONENTS} opponent slots allocated",
         flush=True,
     )
 
