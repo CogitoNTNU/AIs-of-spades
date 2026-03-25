@@ -309,7 +309,7 @@ class Table(gym.Env):
                 self.update_hand_log(
                     player.identifier,
                     PlayerAction.CALL.value,
-                    call_size / stack,
+                    (call_size / self.pot_mgr.pot) if self.pot_mgr.pot > 0 else 0.0,
                     self.street_mgr.street,
                 )
                 self.hh.write(
@@ -320,7 +320,7 @@ class Table(gym.Env):
                 self.update_hand_log(
                     player.identifier,
                     PlayerAction.CALL.value,
-                    call_size / stack,
+                    (call_size / self.pot_mgr.pot) if self.pot_mgr.pot > 0 else 0.0,
                     self.street_mgr.street,
                 )
                 self.hh.write(
@@ -338,7 +338,7 @@ class Table(gym.Env):
                 self.update_hand_log(
                     player.identifier,
                     PlayerAction.BET.value,
-                    actual / stack,
+                    (actual / self.pot_mgr.pot) if self.pot_mgr.pot > 0 else 0.0,
                     self.street_mgr.street,
                 )
                 self.hh.write("%s: bets $%.2f%s" % (player.name, actual * BB, suffix))
@@ -346,7 +346,7 @@ class Table(gym.Env):
                 self.update_hand_log(
                     player.identifier,
                     PlayerAction.BET.value,
-                    actual / stack,
+                    (actual / self.pot_mgr.pot) if self.pot_mgr.pot > 0 else 0.0,
                     self.street_mgr.street,
                 )
                 self.hh.write(
@@ -529,11 +529,23 @@ class Table(gym.Env):
 
     def update_hand_log(self, player_id, action_value, bet_fraction, street):
         hand_log_line = np.zeros(self.hand_log_shape[-1])
-        hand_log_line[:4] = [
+
+        stack_norm = self.players[player_id].stack / self.stack_high
+        pot_norm = self.pot_mgr.pot / (
+            self.stack_high * self.n_players
+        )  # scala ragionevole
+        active = sum(1 for p in self.players if p.state is PlayerState.ACTIVE)
+        btm_norm = self.betting.bet_to_match / self.stack_high
+
+        hand_log_line[:8] = [
             player_id,
             action_value,
             bet_fraction,
             street,
+            pot_norm,
+            btm_norm,
+            active,
+            stack_norm,
         ]
 
         if self.hand_number < self.hand_log.shape[0]:

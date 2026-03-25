@@ -1,5 +1,5 @@
 weight_manager:
-  model_class: "EvenNet"
+  model_class: "SimoNet"
   models_dir: "res/models"
   max_models: 100
   keep_latest: 20
@@ -8,7 +8,7 @@ weight_manager:
 learning_loop:
   learning_rate: 1e-3        
   epochs: 10000
-  games_per_epoch: 64
+  games_per_epoch: 60
   hands_per_game: 32
   save_interval: 100
   save_every: 20

@@ -1,3 +1,4 @@
+import os
 import time
 import traceback
 
@@ -15,36 +16,80 @@ from training.wandb_compat import wandb
 
 
 # ---------------------------------------------------------------------------
-# Worker (CPU-only, runs in subprocess)
+# Module-level worker state — initialised ONCE per worker process by
+# _worker_init(), then reused across every pool.map() call.
+#
+# Key design: model objects are allocated once at worker startup and reused
+# via load_state_dict() on every task.  This avoids re-importing torch and
+# re-allocating nn.Module objects on every game, which is catastrophically
+# slow on NFS-mounted cluster filesystems (50-100x slower than local SSD).
+# ---------------------------------------------------------------------------
+
+_worker_model: "PokerNet | None" = None
+_worker_model_class = None
+
+# Pre-allocated opponent slots — one per maximum possible opponent seat.
+# load_state_dict() is cheap (tensor copy in RAM); nn.Module.__init__() is
+# not (Python class instantiation + NFS import hits on every attribute).
+_worker_opponents: list = []
+
+_MAX_OPPONENTS = 5
+
+
+# ---------------------------------------------------------------------------
+# Worker initializer — runs once per subprocess at pool startup
+# ---------------------------------------------------------------------------
+
+
+def _worker_init(model_class):
+    global _worker_model, _worker_model_class, _worker_opponents
+
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
+
+    _worker_model_class = model_class
+    _worker_model = _build_model(model_class)
+    _worker_opponents = [_build_model(model_class) for _ in range(_MAX_OPPONENTS)]
+
+
+# ---------------------------------------------------------------------------
+# Worker task — runs once per game, called by pool.map()
 # ---------------------------------------------------------------------------
 
 
 def _run_game(args):
-    """
-    Subprocess worker: instantiates a fresh CPU-only model, plays a full game,
-    and returns (reward, trajectory).
-
-    CUDA must not be used here — mp.Pool workers cannot share a CUDA context.
-    Exceptions are caught and re-raised with an embedded traceback because
-    mp.Pool on Windows swallows worker tracebacks.
-    """
     try:
-        model_class, state_dict, hands_per_game, opponent_state_dicts = args
+        state_dict, hands_per_game, opponent_state_dicts = args
 
-        model = _build_model(model_class, state_dict)
-        opponents = [_build_model(model_class, osd) for osd in opponent_state_dicts]
+        _worker_model.load_state_dict(state_dict)
+        _worker_model.eval()
+
+        opponents = []
+        for slot, osd in zip(_worker_opponents, opponent_state_dicts):
+            if osd is not None:
+                slot.load_state_dict(osd)
+            else:
+                slot.initialize_internal_state()
+            slot.eval()
+            opponents.append(slot)
 
         with torch.no_grad():
-            reward, trajectory = Game(opponents, model).play(hands_per_game)
+            reward, trajectory = Game(opponents, _worker_model).play(hands_per_game)
 
         return reward, trajectory
 
     except Exception:
-        raise RuntimeError(f"Worker _run_game failed:\n{traceback.format_exc()}")
+        raise RuntimeError(
+            f"[worker {os.getpid()}] _run_game failed:\n{traceback.format_exc()}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Helper: instantiate a model, optionally load weights, set to eval mode
+# ---------------------------------------------------------------------------
 
 
 def _build_model(model_class, state_dict=None):
-    """Instantiate, optionally load weights, and set to eval mode."""
     model = model_class()
     model.initialize_internal_state()
     if state_dict is not None:
@@ -64,7 +109,6 @@ class LearningLoop:
         self.config = config["learning_loop"]
         self.num_workers = self.config.get("num_workers", mp.cpu_count())
 
-        # Model lives on CPU until start_learning() moves it to the target device.
         model_class = config["weight_manager"]["model_class"]
         self.current_model: PokerNet = _build_model(model_class)
 
@@ -73,7 +117,6 @@ class LearningLoop:
             lr=float(self.config.get("learning_rate", 1e-4)),
         )
 
-        # Resolved in start_learning(); stored so helper methods can reference it.
         self.device: torch.device | None = None
 
     # ------------------------------------------------------------------
@@ -82,35 +125,53 @@ class LearningLoop:
 
     def load_checkpoint(self, checkpoint_path: str) -> int:
         """
-        Restore model and optimizer state from a checkpoint.
-        Returns the next epoch to resume from.
-        Tensors are loaded onto CPU; the caller is responsible for moving the
-        model to the target device afterwards.
+        Restore model and optimizer from a checkpoint file.
+        Returns the next epoch index to resume from.
+        Tensors are loaded to CPU; the caller must move the model to the
+        target device afterwards.
         """
+        print(f"[main] loading checkpoint from '{checkpoint_path}' ...", flush=True)
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
         self.current_model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
-        print(
-            f"Checkpoint loaded from '{checkpoint_path}' — resuming from epoch {start_epoch}"
-        )
+        print(f"[main] resuming from epoch {start_epoch}", flush=True)
         return start_epoch
 
     # ------------------------------------------------------------------
-    # Main training loop
+    # Main entry point
     # ------------------------------------------------------------------
 
     def start_learning(self, resume_from: str | None = None):
         """
         Main training loop.
 
-        Architecture:
-          - CPU worker pool  →  runs game simulations, collects trajectories.
-          - Main process GPU →  re-runs forward passes, computes REINFORCE loss,
-                                performs the gradient step.
+        Architecture
+        ------------
+        CPU worker pool   runs game simulations and collects trajectories.
+        Main process GPU  re-runs forward passes, computes REINFORCE loss,
+                          and performs the gradient step.
 
-        Workers receive a CPU-serialized state dict so they never touch CUDA.
-        The gradient step happens exclusively in the main process on `device`.
+        Spawn context
+        -------------
+        We use 'spawn' so workers start with a clean Python interpreter.
+        This avoids PyTorch mutex / allocator deadlocks that occur when fork
+        inherits an already-initialised torch state (the Linux default).
+
+        Worker initializer
+        ------------------
+        _worker_init builds the model and all opponent slots ONCE per worker
+        at pool startup.  Subsequent tasks only receive updated state_dicts
+        (not model classes), eliminating per-task allocation and NFS import
+        overhead that caused the ~600 s/epoch regression on SLURM.
+
+        Note on share_memory_()
+        -----------------------
+        share_memory_() is intentionally NOT used here.  With spawn, child
+        processes do not inherit the parent address space, so shared-memory
+        tensors are still pickled and sent through the pipe — the same cost
+        as a regular CPU tensor.  share_memory_() only helps with fork or
+        forkserver.  Using it with spawn adds complexity with no gain.
         """
         epochs = self.config.get("epochs", 1000)
         games_per_epoch = self.config.get("games_per_epoch", 10)
@@ -118,17 +179,33 @@ class LearningLoop:
         save_interval = self.config.get("save_interval", 20)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Training on device: {self.device}")
+
+        print(
+            f"[main] device={self.device}  epochs={epochs}  "
+            f"games/epoch={games_per_epoch}  hands/game={hands_per_game}  "
+            f"workers={self.num_workers}",
+            flush=True,
+        )
 
         self.current_model = self.current_model.to(self.device)
 
         start_epoch = 0
         if resume_from:
             start_epoch = self.load_checkpoint(resume_from)
-            # load_checkpoint uses map_location="cpu", so re-send to device.
             self.current_model = self.current_model.to(self.device)
 
-        with mp.Pool(processes=self.num_workers) as pool:
+        model_class = self.current_model.__class__
+
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(
+            processes=self.num_workers,
+            initializer=_worker_init,
+            initargs=(model_class,),
+        ) as pool:
+            print(
+                f"[main] pool ready — {self.num_workers} workers",
+                flush=True,
+            )
             try:
                 for epoch in range(start_epoch, epochs):
                     self._run_epoch(
@@ -140,22 +217,27 @@ class LearningLoop:
                         pool,
                     )
             except KeyboardInterrupt:
-                print("KeyboardInterrupt caught — terminating worker pool.")
+                print("[main] interrupted — terminating pool", flush=True)
                 pool.terminate()
                 pool.join()
                 raise
 
+    # ------------------------------------------------------------------
+    # Single epoch
+    # ------------------------------------------------------------------
+
     def _run_epoch(
         self, epoch, epochs, games_per_epoch, hands_per_game, save_interval, pool
     ):
-        start_time = time.time()
+        t_epoch_start = time.time()
 
-        # Serialize weights to CPU — CUDA tensors cannot cross process boundaries.
+        # Serialize weights once; each worker deserializes its own copy.
         state_dict = {k: v.cpu() for k, v in self.current_model.state_dict().items()}
         worker_args = self._build_worker_args(
             state_dict, games_per_epoch, hands_per_game
         )
 
+        # ── Simulation ────────────────────────────────────────────────
         t0 = time.time()
         results = pool.map(_run_game, worker_args)
         t_simulation = time.time() - t0
@@ -164,22 +246,50 @@ class LearningLoop:
         batch_trajectories = [t for _, t in results]
         total_steps = sum(len(t) for t in batch_trajectories)
 
+        # ── Loss ──────────────────────────────────────────────────────
         t0 = time.time()
-        loss = self._compute_reinforce_loss(batch_trajectories, batch_rewards)
+        loss, mean_probs, diversity_penalty = self._compute_reinforce_loss(
+            batch_trajectories, batch_rewards
+        )
         t_loss = time.time() - t0
 
+        # ── Gradient step ─────────────────────────────────────────────
         t0 = time.time()
         self._gradient_step(loss)
         t_grad = time.time() - t0
 
+        # ── Stats ─────────────────────────────────────────────────────
         t0 = time.time()
         action_stats = self._compute_action_stats(batch_trajectories)
         t_stats = time.time() - t0
 
-        t_total = time.time() - start_time
-        t_overhead = t_total - (t_simulation + t_loss + t_grad + t_stats)
+        t_total = time.time() - t_epoch_start
         avg_reward = np.mean(batch_rewards)
+        grad_norm = self._get_grad_norm()
 
+        # ── One summary line per epoch ─────────────────────────────────
+        probs_str = "  ".join(
+            f"{name}={p:.2%}"
+            for name, p in zip(["fold", "call", "bet"], mean_probs.tolist())
+        )
+        print(
+            f"[{epoch + 1:>5}/{epochs}] "
+            f"loss={loss.item():+.4f}  "
+            f"reward={avg_reward:+8.1f}±{np.std(batch_rewards):.1f}  "
+            f"steps={total_steps:>5}  {probs_str}  "
+            f"grad={grad_norm:.3f}  "
+            f"sim={t_simulation:.1f}s  fwd={t_loss:.1f}s  bwd={t_grad:.1f}s",
+            flush=True,
+        )
+
+        if diversity_penalty.item() > 0:
+            print(
+                f"[{epoch + 1:>5}/{epochs}] WARNING diversity penalty = "
+                f"{diversity_penalty.item():.4f}",
+                flush=True,
+            )
+
+        # ── Logging ───────────────────────────────────────────────────
         self._log_epoch(
             epoch=epoch,
             loss=loss,
@@ -193,31 +303,47 @@ class LearningLoop:
             t_loss=t_loss,
             t_grad=t_grad,
             t_stats=t_stats,
-            t_overhead=t_overhead,
+            t_overhead=t_total - (t_simulation + t_loss + t_grad + t_stats),
         )
 
-        print(
-            f"Epoch {epoch + 1}/{epochs} | "
-            f"loss: {loss.item():.4f} | avg reward: {avg_reward:.4f} | "
-            f"total: {t_total:.2f}s  sim: {t_simulation:.2f}s  "
-            f"fwd: {t_loss:.2f}s  bwd: {t_grad:.2f}s  "
-            f"overhead: {t_overhead:.2f}s | "
-            f"device: {self.device}"
+        # ── Checkpoint ────────────────────────────────────────────────
+        should_save = (
+            epoch % save_interval == 0 or epoch == self.config.get("epochs", 1000) - 1
         )
-
-        if epoch % save_interval == 0 or epoch == self.config.get("epochs", 1000) - 1:
+        if should_save:
             self.weight_manager.save(self.current_model, self.optimizer, epoch)
+            print(f"[{epoch + 1:>5}/{epochs}] checkpoint saved", flush=True)
+
+    # ------------------------------------------------------------------
+    # Worker args builder
+    # ------------------------------------------------------------------
 
     def _build_worker_args(self, state_dict, games_per_epoch, hands_per_game):
-        return [
-            (
-                self.current_model.__class__,
-                state_dict,
-                hands_per_game,
-                [self.weight_manager.sample_opponent_state_dict() for _ in range(5)],
+        """
+        Build one argument tuple per game.
+
+        Opponent state_dicts are sampled here on the main process (WeightManager
+        is not multiprocess-safe).  Each game receives independently sampled
+        opponents, preserving population diversity even though opponent slots
+        inside workers are reused across games.
+        """
+        args = []
+        none_count = 0
+        for _ in range(games_per_epoch):
+            opponent_state_dicts = [
+                self.weight_manager.sample_opponent_state_dict()
+                for _ in range(_MAX_OPPONENTS)
+            ]
+            none_count += sum(1 for osd in opponent_state_dicts if osd is None)
+            args.append((state_dict, hands_per_game, opponent_state_dicts))
+
+        if none_count > 0:
+            print(
+                f"[main] {none_count} opponent slots using random weights "
+                f"(no checkpoint yet)",
+                flush=True,
             )
-            for _ in range(games_per_epoch)
-        ]
+        return args
 
     # ------------------------------------------------------------------
     # Logging
@@ -247,7 +373,7 @@ class LearningLoop:
         wandb.log(
             data={
                 "epoch": epoch,
-                # Timing breakdown
+                # Timing
                 "time/total": t_total,
                 "time/simulation": t_simulation,
                 "time/loss_forward": t_loss,
@@ -279,74 +405,86 @@ class LearningLoop:
 
     def _compute_reinforce_loss(
         self, batch_trajectories: list, batch_rewards: list
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        REINFORCE loss over a batch of episodes, computed on self.device.
+        Compute the REINFORCE loss over a batch of episodes.
 
-        For each step t in episode i:
-            loss += -A_i * (log_p_discrete_t + log_p_continuous_t)
-
-        Plus a batch-level diversity penalty:
-            loss += diversity_coef * Σ_a( relu(freq_a - hi) + relu(lo - freq_a) )
-
-        where freq_a is the fraction of batch steps where action a was sampled.
-        The penalty fires only when aggregate action frequencies exit [lo, hi]
-        (default [0.01, 0.99]), leaving the model free to be confident on any
-        individual step.  diversity_coef is scaled by mean |reward| to stay
-        proportional to reward magnitude throughout training.
+        Returns
+        -------
+        loss             : scalar tensor (reinforce + diversity penalty)
+        mean_probs       : [3] mean action probabilities across all steps
+        diversity_penalty: scalar tensor (zero if no collapse detected)
         """
         device = self.device
 
-        # Normalize rewards into advantages to reduce variance.
         advantages = np.array(batch_rewards, dtype=np.float32)
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        step_losses = []
-        action_probs_all = []
-
+        # Flatten all trajectories into one, paired with their per-step advantage.
+        flat_trajectory = []
+        flat_advantages = []
         for trajectory, advantage in zip(batch_trajectories, advantages):
             if not trajectory:
                 continue
+            flat_trajectory.extend(trajectory)
+            flat_advantages.extend([advantage] * len(trajectory))
 
-            reward_tensor = torch.tensor(advantage, dtype=torch.float32, device=device)
+        if not flat_trajectory:
+            print("[main] WARNING: no steps — returning zero loss", flush=True)
+            zero = torch.tensor(0.0, requires_grad=False, device=device)
+            return zero, torch.zeros(3, device=device), zero
 
-            for obs, action in trajectory:
-                obs_gpu = obs.to(device) if isinstance(obs, torch.Tensor) else obs
-
-                action_logits, bet_mean, bet_std = self.current_model.forward(obs_gpu)
-
-                log_p_discrete = D.Categorical(logits=action_logits).log_prob(
-                    action.action_tensor.to(device)
-                )
-                log_p_continuous = D.Normal(bet_mean, bet_std).log_prob(
-                    action.bet_tensor.to(device)
-                )
-
-                step_losses.append(-reward_tensor * (log_p_discrete + log_p_continuous))
-                action_probs_all.append(D.Categorical(logits=action_logits).probs)
-
-        if not step_losses:
-            return torch.tensor(0.0, requires_grad=False, device=device)
-
-        reinforce_loss = torch.stack(step_losses).mean()
-        diversity_penalty = self._compute_diversity_penalty(
-            action_probs_all, batch_rewards
+        # Single batched forward pass — the model handles its own preprocessing.
+        action_logits, bet_mean, bet_std = self.current_model.forward_batch(
+            flat_trajectory
         )
 
-        return reinforce_loss + diversity_penalty
+        action_batch = torch.stack([a.action_tensor for _, a in flat_trajectory]).to(
+            device
+        )
+        bet_batch = torch.stack([a.bet_tensor for _, a in flat_trajectory]).to(device)
+        adv_batch = torch.tensor(flat_advantages, dtype=torch.float32, device=device)
+
+        log_p_discrete = D.Categorical(logits=action_logits).log_prob(action_batch)
+        log_p_continuous = D.Normal(bet_mean, bet_std).log_prob(bet_batch).squeeze(-1)
+
+        reinforce_loss = (-adv_batch * (log_p_discrete + log_p_continuous)).mean()
+
+        action_probs = D.Categorical(logits=action_logits).probs  # [N, 3]
+        diversity_penalty, mean_probs = self._compute_diversity_penalty(
+            action_probs, batch_rewards
+        )
+
+        return reinforce_loss + diversity_penalty, mean_probs, diversity_penalty
 
     def _compute_diversity_penalty(
-        self, action_probs_all: list, batch_rewards: list
-    ) -> torch.Tensor:
+        self, action_probs: torch.Tensor, batch_rewards: list
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Penalise collapse toward a single action at the batch level.
+        Fires only when mean action probabilities exit [lo, hi].
+        The coefficient is scaled by mean |reward| to stay proportional
+        to the reward magnitude throughout training.
+
+        Parameters
+        ----------
+        action_probs : [N, 3]  probabilities already computed by forward_batch
+        batch_rewards: list of per-episode scalar rewards
+
+        Returns
+        -------
+        penalty    : scalar tensor
+        mean_probs : [3] mean probabilities (used for logging)
+        """
         lo = float(self.config.get("diversity_lo", 0.01))
         hi = float(self.config.get("diversity_hi", 0.99))
         reward_scale = float(np.mean(np.abs(batch_rewards)) + 1e-8)
         coef = float(self.config.get("diversity_coef", 0.1)) * reward_scale
 
-        mean_probs = torch.stack(action_probs_all).mean(dim=0)  # (n_actions,)
+        mean_probs = action_probs.mean(dim=0)  # [3]
         penalty = (torch.relu(mean_probs - hi) + torch.relu(lo - mean_probs)).sum()
 
-        return coef * penalty
+        return coef * penalty, mean_probs
 
     # ------------------------------------------------------------------
     # Optimizer helpers
@@ -355,6 +493,7 @@ class LearningLoop:
     def _gradient_step(self, loss: torch.Tensor):
         """Backprop + gradient clipping + optimizer step."""
         if not loss.requires_grad:
+            print("[main] WARNING: loss has no grad — skipping backward", flush=True)
             return
         self.optimizer.zero_grad()
         loss.backward()
@@ -362,7 +501,7 @@ class LearningLoop:
         self.optimizer.step()
 
     def _get_grad_norm(self) -> float:
-        """L2 norm of all gradients after backward()."""
+        """L2 norm of all parameter gradients after backward()."""
         total_norm = sum(
             p.grad.data.norm(2).item() ** 2
             for p in self.current_model.parameters()
