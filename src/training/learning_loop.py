@@ -15,27 +15,59 @@ from training.wandb_compat import wandb
 
 
 # ---------------------------------------------------------------------------
+# Module-level worker state — initialised once per worker process by
+# _worker_init(), then reused across all pool.map() calls.
+# ---------------------------------------------------------------------------
+
+_worker_model = None
+_worker_model_class = None
+
+
+def _worker_init(model_class):
+    """
+    Pool initializer: runs exactly once per worker process after spawn.
+
+    Importing torch and building the model here (instead of inside every
+    _run_game call) avoids paying the NFS / import cost on every task.
+    On a SLURM cluster with a network filesystem this was the dominant
+    source of the ~600s/epoch slowdown vs ~10s/epoch on a local machine.
+    """
+    global _worker_model, _worker_model_class
+    _worker_model_class = model_class
+    _worker_model = _build_model(model_class)
+
+
+# ---------------------------------------------------------------------------
 # Worker (CPU-only, runs in subprocess)
 # ---------------------------------------------------------------------------
 
 
 def _run_game(args):
     """
-    Subprocess worker: instantiates a fresh CPU-only model, plays a full game,
-    and returns (reward, trajectory).
+    Subprocess worker: loads updated weights into the pre-built CPU model,
+    plays a full game, and returns (reward, trajectory).
+
+    Only the state_dict and game parameters are sent per task — the model
+    object itself is reused from _worker_init, which saves the cost of
+    re-importing torch and reconstructing the network on every call.
 
     CUDA must not be used here — mp.Pool workers cannot share a CUDA context.
     Exceptions are caught and re-raised with an embedded traceback because
     mp.Pool on Windows swallows worker tracebacks.
     """
     try:
-        model_class, state_dict, hands_per_game, opponent_state_dicts = args
+        state_dict, hands_per_game, opponent_state_dicts = args
 
-        model = _build_model(model_class, state_dict)
-        opponents = [_build_model(model_class, osd) for osd in opponent_state_dicts]
+        # Reuse the pre-built model; just update its weights.
+        _worker_model.load_state_dict(state_dict)
+        _worker_model.eval()
+
+        opponents = [
+            _build_model(_worker_model_class, osd) for osd in opponent_state_dicts
+        ]
 
         with torch.no_grad():
-            reward, trajectory = Game(opponents, model).play(hands_per_game)
+            reward, trajectory = Game(opponents, _worker_model).play(hands_per_game)
 
         return reward, trajectory
 
@@ -109,15 +141,28 @@ class LearningLoop:
           - Main process GPU →  re-runs forward passes, computes REINFORCE loss,
                                 performs the gradient step.
 
-        Workers receive a CPU-serialized state dict so they never touch CUDA.
-        The gradient step happens exclusively in the main process on `device`.
+        Key design decisions
+        --------------------
+        spawn context
+            Used explicitly so workers start with a clean Python interpreter.
+            This avoids PyTorch mutex / allocator deadlocks that occur when
+            fork inherits an already-initialised torch state (the Linux default).
 
-        spawn context is used explicitly so that workers start with a clean
-        Python interpreter — this avoids PyTorch mutex / allocator deadlocks
-        that occur when fork inherits an already-initialised torch state,
-        which is the default on Linux and is the cause of the ~600s/epoch
-        slowdown observed on SLURM clusters vs ~10s/epoch on Windows (which
-        always uses spawn).
+        Pool initializer (_worker_init)
+            Each worker builds the model ONCE at startup.  Subsequent tasks
+            only send the updated state_dict — not the model class — which
+            eliminates the per-task import + construction overhead that caused
+            the ~600 s/epoch regression on SLURM (NFS makes Python imports
+            ~50–100× slower than on a local SSD).
+
+        Note on share_memory_()
+            share_memory_() is NOT used here intentionally.  With spawn, the
+            child processes do not inherit the parent address space, so shared
+            memory tensors still have to be pickled and sent through the pipe
+            to each worker — the same cost as a regular CPU tensor.
+            share_memory_() is only beneficial with fork or forkserver, where
+            the child can directly mmap the parent's pages without copying.
+            Using it with spawn adds complexity with no gain.
         """
         epochs = self.config.get("epochs", 1000)
         games_per_epoch = self.config.get("games_per_epoch", 10)
@@ -135,8 +180,14 @@ class LearningLoop:
             # load_checkpoint uses map_location="cpu", so re-send to device.
             self.current_model = self.current_model.to(self.device)
 
+        model_class = self.current_model.__class__
+
         ctx = mp.get_context("spawn")
-        with ctx.Pool(processes=self.num_workers) as pool:
+        with ctx.Pool(
+            processes=self.num_workers,
+            initializer=_worker_init,  # <-- runs once per worker at startup
+            initargs=(model_class,),
+        ) as pool:
             try:
                 for epoch in range(start_epoch, epochs):
                     self._run_epoch(
@@ -158,8 +209,12 @@ class LearningLoop:
     ):
         start_time = time.time()
 
-        # Serialize weights to CPU — CUDA tensors cannot cross process boundaries.
+        # Serialize weights to CPU so they can be pickled across the spawn
+        # boundary.  One copy is sent per worker slot (not per game), because
+        # Pool reuses worker processes across pool.map calls — each of the
+        # num_workers processes receives the state_dict once per epoch.
         state_dict = {k: v.cpu() for k, v in self.current_model.state_dict().items()}
+
         worker_args = self._build_worker_args(
             state_dict, games_per_epoch, hands_per_game
         )
@@ -217,9 +272,10 @@ class LearningLoop:
             self.weight_manager.save(self.current_model, self.optimizer, epoch)
 
     def _build_worker_args(self, state_dict, games_per_epoch, hands_per_game):
+        # model_class is no longer included — workers already have it from
+        # _worker_init, so we avoid pickling the class on every task.
         return [
             (
-                self.current_model.__class__,
                 state_dict,
                 hands_per_game,
                 [self.weight_manager.sample_opponent_state_dict() for _ in range(5)],

@@ -1,5 +1,5 @@
 weight_manager:
-  model_class: "EvenNet"
+  model_class: "SimoNet"
   models_dir: "res/models"
   max_models: 100
   keep_latest: 20
