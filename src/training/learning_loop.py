@@ -111,6 +111,13 @@ class LearningLoop:
 
         Workers receive a CPU-serialized state dict so they never touch CUDA.
         The gradient step happens exclusively in the main process on `device`.
+
+        spawn context is used explicitly so that workers start with a clean
+        Python interpreter — this avoids PyTorch mutex / allocator deadlocks
+        that occur when fork inherits an already-initialised torch state,
+        which is the default on Linux and is the cause of the ~600s/epoch
+        slowdown observed on SLURM clusters vs ~10s/epoch on Windows (which
+        always uses spawn).
         """
         epochs = self.config.get("epochs", 1000)
         games_per_epoch = self.config.get("games_per_epoch", 10)
@@ -128,7 +135,8 @@ class LearningLoop:
             # load_checkpoint uses map_location="cpu", so re-send to device.
             self.current_model = self.current_model.to(self.device)
 
-        with mp.Pool(processes=self.num_workers) as pool:
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(processes=self.num_workers) as pool:
             try:
                 for epoch in range(start_epoch, epochs):
                     self._run_epoch(
