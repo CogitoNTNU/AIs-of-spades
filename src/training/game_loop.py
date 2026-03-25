@@ -6,7 +6,6 @@ from pokerenv.observation import Observation
 from pokerenv.common import PlayerState
 
 from training.player_agent import PlayerAgent
-from training.weight_manager import WeightManager
 
 MAIN_CHARACTER_NAME = "UGO"
 
@@ -18,8 +17,10 @@ class Game:
         self.table = None
         self.agents = []
 
-        # trajectory: list of (log_p_discrete, log_p_continuous) — both PyTorch tensors
+        # trajectory: list of (PreprocessedObs, Action)
         # Only steps where the main character acted are stored.
+        # Preprocessing is done here in the worker to avoid redundant work
+        # on the main process.
         self.trajectory = []
         self.reward = 0.0
 
@@ -82,8 +83,6 @@ class Game:
                 acting_agent = self.agents[acting_player_i]
 
                 if acting_agent.state != PlayerState.ACTIVE or acting_agent.all_in:
-                    # Il tavolo ha dato il turno a un giocatore inattivo —
-                    # forziamo _end_hand come nella UI
                     self.table.hand_is_over = True
                     self.table._end_hand()
                     rewards = np.asarray([p.get_reward() for p in sorted(self.agents)])
@@ -92,7 +91,10 @@ class Game:
                 action = acting_agent.get_action(obs)
 
                 if acting_player_i == 0:
-                    self.trajectory.append((obs, action))
+                    # Preprocess here in the worker (CPU, parallel) so the main
+                    # process only needs to stack tensors and run the GPU forward.
+                    preprocessed = self.current_model.preprocess(obs)
+                    self.trajectory.append((preprocessed, action))
 
                 obs_array, rewards, done = self.table.step(action)
 
