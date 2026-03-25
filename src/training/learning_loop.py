@@ -1,3 +1,4 @@
+import os
 import time
 import traceback
 
@@ -15,68 +16,119 @@ from training.wandb_compat import wandb
 
 
 # ---------------------------------------------------------------------------
-# Module-level worker state — initialised once per worker process by
-# _worker_init(), then reused across all pool.map() calls.
+# Module-level worker state — initialised ONCE per worker process by
+# _worker_init(), then reused across every pool.map() call.
+#
+# Key design: model objects are allocated once at worker startup and reused
+# via load_state_dict() on every task.  This avoids re-importing torch and
+# re-allocating nn.Module objects on every game, which is catastrophically
+# slow on NFS-mounted cluster filesystems (50-100x slower than local SSD).
 # ---------------------------------------------------------------------------
 
-_worker_model = None
+_worker_model: "PokerNet | None" = None
 _worker_model_class = None
+
+# Pre-allocated opponent slots — one per maximum possible opponent seat.
+# load_state_dict() is cheap (tensor copy in RAM); nn.Module.__init__() is
+# not (Python class instantiation + NFS import hits on every attribute).
+_worker_opponents: list = []
+
+_MAX_OPPONENTS = 5
+
+
+# ---------------------------------------------------------------------------
+# Worker initializer — runs once per subprocess at pool startup
+# ---------------------------------------------------------------------------
 
 
 def _worker_init(model_class):
-    """
-    Pool initializer: runs exactly once per worker process after spawn.
+    global _worker_model, _worker_model_class, _worker_opponents
 
-    Importing torch and building the model here (instead of inside every
-    _run_game call) avoids paying the NFS / import cost on every task.
-    On a SLURM cluster with a network filesystem this was the dominant
-    source of the ~600s/epoch slowdown vs ~10s/epoch on a local machine.
-    """
-    global _worker_model, _worker_model_class
     _worker_model_class = model_class
     _worker_model = _build_model(model_class)
 
+    # Pre-allocate all opponent slots upfront.  Dynamic sampling still works:
+    # each game receives fresh state_dicts chosen by WeightManager; we only
+    # avoid re-instantiating the nn.Module objects.
+    _worker_opponents = [_build_model(model_class) for _ in range(_MAX_OPPONENTS)]
+
+    print(
+        f"[worker {os.getpid()}] init complete — "
+        f"main model + {_MAX_OPPONENTS} opponent slots allocated",
+        flush=True,
+    )
+
 
 # ---------------------------------------------------------------------------
-# Worker (CPU-only, runs in subprocess)
+# Worker task — runs once per game, called by pool.map()
 # ---------------------------------------------------------------------------
 
 
 def _run_game(args):
-    """
-    Subprocess worker: loads updated weights into the pre-built CPU model,
-    plays a full game, and returns (reward, trajectory).
+    t_start = time.time()
+    pid = os.getpid()
+    print(f"[worker {pid}] game start", flush=True)
 
-    Only the state_dict and game parameters are sent per task — the model
-    object itself is reused from _worker_init, which saves the cost of
-    re-importing torch and reconstructing the network on every call.
-
-    CUDA must not be used here — mp.Pool workers cannot share a CUDA context.
-    Exceptions are caught and re-raised with an embedded traceback because
-    mp.Pool on Windows swallows worker tracebacks.
-    """
     try:
         state_dict, hands_per_game, opponent_state_dicts = args
 
-        # Reuse the pre-built model; just update its weights.
+        # ── Load current model weights ────────────────────────────────
+        t0 = time.time()
         _worker_model.load_state_dict(state_dict)
         _worker_model.eval()
+        print(
+            f"[worker {pid}] current model loaded in {time.time() - t0:.3f}s",
+            flush=True,
+        )
 
-        opponents = [
-            _build_model(_worker_model_class, osd) for osd in opponent_state_dicts
-        ]
+        # ── Load opponent weights into pre-allocated slots ────────────
+        # Each game gets dynamically sampled opponents (diversity preserved).
+        # Only load_state_dict() is called — no nn.Module allocation, no NFS
+        # import hits.
+        t0 = time.time()
+        opponents = []
+        for slot, osd in zip(_worker_opponents, opponent_state_dicts):
+            if osd is not None:
+                slot.load_state_dict(osd)
+            else:
+                # No checkpoint saved yet (e.g. epoch 0) — use random weights.
+                slot.initialize_internal_state()
+            slot.eval()
+            opponents.append(slot)
+        n_opp = len(opponents)
+        print(
+            f"[worker {pid}] {n_opp} opponents loaded in {time.time() - t0:.3f}s",
+            flush=True,
+        )
 
+        # ── Play ──────────────────────────────────────────────────────
+        t0 = time.time()
         with torch.no_grad():
             reward, trajectory = Game(opponents, _worker_model).play(hands_per_game)
+        t_game = time.time() - t0
 
+        t_total = time.time() - t_start
+        print(
+            f"[worker {pid}] game done — "
+            f"reward={reward:.3f}  steps={len(trajectory)}  "
+            f"game={t_game:.2f}s  total={t_total:.2f}s",
+            flush=True,
+        )
         return reward, trajectory
 
     except Exception:
-        raise RuntimeError(f"Worker _run_game failed:\n{traceback.format_exc()}")
+        raise RuntimeError(
+            f"[worker {os.getpid()}] _run_game failed:\n{traceback.format_exc()}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Helper: build and optionally warm a model
+# ---------------------------------------------------------------------------
 
 
 def _build_model(model_class, state_dict=None):
-    """Instantiate, optionally load weights, and set to eval mode."""
+    """Instantiate a model, optionally load weights, set to eval mode."""
     model = model_class()
     model.initialize_internal_state()
     if state_dict is not None:
@@ -96,7 +148,6 @@ class LearningLoop:
         self.config = config["learning_loop"]
         self.num_workers = self.config.get("num_workers", mp.cpu_count())
 
-        # Model lives on CPU until start_learning() moves it to the target device.
         model_class = config["weight_manager"]["model_class"]
         self.current_model: PokerNet = _build_model(model_class)
 
@@ -105,7 +156,6 @@ class LearningLoop:
             lr=float(self.config.get("learning_rate", 1e-4)),
         )
 
-        # Resolved in start_learning(); stored so helper methods can reference it.
         self.device: torch.device | None = None
 
     # ------------------------------------------------------------------
@@ -114,55 +164,56 @@ class LearningLoop:
 
     def load_checkpoint(self, checkpoint_path: str) -> int:
         """
-        Restore model and optimizer state from a checkpoint.
-        Returns the next epoch to resume from.
-        Tensors are loaded onto CPU; the caller is responsible for moving the
-        model to the target device afterwards.
+        Restore model and optimizer from a checkpoint file.
+        Returns the next epoch index to resume from.
+        Tensors are loaded to CPU; the caller must move the model to the
+        target device afterwards.
         """
+        print(f"[main] loading checkpoint from '{checkpoint_path}' ...", flush=True)
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
         self.current_model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
         print(
-            f"Checkpoint loaded from '{checkpoint_path}' — resuming from epoch {start_epoch}"
+            f"[main] checkpoint loaded — resuming from epoch {start_epoch}",
+            flush=True,
         )
         return start_epoch
 
     # ------------------------------------------------------------------
-    # Main training loop
+    # Main entry point
     # ------------------------------------------------------------------
 
     def start_learning(self, resume_from: str | None = None):
         """
         Main training loop.
 
-        Architecture:
-          - CPU worker pool  →  runs game simulations, collects trajectories.
-          - Main process GPU →  re-runs forward passes, computes REINFORCE loss,
-                                performs the gradient step.
+        Architecture
+        ------------
+        CPU worker pool   runs game simulations and collects trajectories.
+        Main process GPU  re-runs forward passes, computes REINFORCE loss,
+                          and performs the gradient step.
 
-        Key design decisions
-        --------------------
-        spawn context
-            Used explicitly so workers start with a clean Python interpreter.
-            This avoids PyTorch mutex / allocator deadlocks that occur when
-            fork inherits an already-initialised torch state (the Linux default).
+        Spawn context
+        -------------
+        We use 'spawn' so workers start with a clean Python interpreter.
+        This avoids PyTorch mutex / allocator deadlocks that occur when fork
+        inherits an already-initialised torch state (the Linux default).
 
-        Pool initializer (_worker_init)
-            Each worker builds the model ONCE at startup.  Subsequent tasks
-            only send the updated state_dict — not the model class — which
-            eliminates the per-task import + construction overhead that caused
-            the ~600 s/epoch regression on SLURM (NFS makes Python imports
-            ~50–100× slower than on a local SSD).
+        Worker initializer
+        ------------------
+        _worker_init builds the model and all opponent slots ONCE per worker
+        at pool startup.  Subsequent tasks only receive updated state_dicts
+        (not model classes), eliminating per-task allocation and NFS import
+        overhead that caused the ~600 s/epoch regression on SLURM.
 
         Note on share_memory_()
-            share_memory_() is NOT used here intentionally.  With spawn, the
-            child processes do not inherit the parent address space, so shared
-            memory tensors still have to be pickled and sent through the pipe
-            to each worker — the same cost as a regular CPU tensor.
-            share_memory_() is only beneficial with fork or forkserver, where
-            the child can directly mmap the parent's pages without copying.
-            Using it with spawn adds complexity with no gain.
+        -----------------------
+        share_memory_() is intentionally NOT used here.  With spawn, child
+        processes do not inherit the parent address space, so shared-memory
+        tensors are still pickled and sent through the pipe — the same cost
+        as a regular CPU tensor.  share_memory_() only helps with fork or
+        forkserver.  Using it with spawn adds complexity with no gain.
         """
         epochs = self.config.get("epochs", 1000)
         games_per_epoch = self.config.get("games_per_epoch", 10)
@@ -170,24 +221,34 @@ class LearningLoop:
         save_interval = self.config.get("save_interval", 20)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Training on device: {self.device}")
+        print(f"[main] training device: {self.device}", flush=True)
+        print(
+            f"[main] config — epochs={epochs}  games/epoch={games_per_epoch}  "
+            f"hands/game={hands_per_game}  workers={self.num_workers}",
+            flush=True,
+        )
 
         self.current_model = self.current_model.to(self.device)
 
         start_epoch = 0
         if resume_from:
             start_epoch = self.load_checkpoint(resume_from)
-            # load_checkpoint uses map_location="cpu", so re-send to device.
+            # load_checkpoint uses map_location="cpu"; re-send to device.
             self.current_model = self.current_model.to(self.device)
 
         model_class = self.current_model.__class__
 
+        print(
+            f"[main] spawning pool with {self.num_workers} workers ...",
+            flush=True,
+        )
         ctx = mp.get_context("spawn")
         with ctx.Pool(
             processes=self.num_workers,
-            initializer=_worker_init,  # <-- runs once per worker at startup
+            initializer=_worker_init,
             initargs=(model_class,),
         ) as pool:
+            print(f"[main] pool ready", flush=True)
             try:
                 for epoch in range(start_epoch, epochs):
                     self._run_epoch(
@@ -199,26 +260,50 @@ class LearningLoop:
                         pool,
                     )
             except KeyboardInterrupt:
-                print("KeyboardInterrupt caught — terminating worker pool.")
+                print("[main] KeyboardInterrupt — terminating pool", flush=True)
                 pool.terminate()
                 pool.join()
                 raise
 
+    # ------------------------------------------------------------------
+    # Single epoch
+    # ------------------------------------------------------------------
+
     def _run_epoch(
         self, epoch, epochs, games_per_epoch, hands_per_game, save_interval, pool
     ):
-        start_time = time.time()
+        print(
+            f"\n[main] ── epoch {epoch + 1}/{epochs} ──────────────────────────",
+            flush=True,
+        )
+        t_epoch_start = time.time()
 
-        # Serialize weights to CPU so they can be pickled across the spawn
-        # boundary.  One copy is sent per worker slot (not per game), because
-        # Pool reuses worker processes across pool.map calls — each of the
-        # num_workers processes receives the state_dict once per epoch.
+        # Serialize model weights to CPU once.  The same dict is pickled and
+        # sent to every worker slot; each worker deserializes its own copy.
+        t0 = time.time()
         state_dict = {k: v.cpu() for k, v in self.current_model.state_dict().items()}
+        print(
+            f"[main] state_dict serialized to CPU in {time.time() - t0:.3f}s",
+            flush=True,
+        )
 
+        # Sample opponent state_dicts on the main process (WeightManager is
+        # not thread/process safe and must not be called from workers).
+        t0 = time.time()
         worker_args = self._build_worker_args(
             state_dict, games_per_epoch, hands_per_game
         )
+        print(
+            f"[main] opponent sampling done in {time.time() - t0:.3f}s "
+            f"({games_per_epoch} games × {_MAX_OPPONENTS} opponents)",
+            flush=True,
+        )
 
+        # ── Simulation ────────────────────────────────────────────────
+        print(
+            f"[main] dispatching {games_per_epoch} games to pool ...",
+            flush=True,
+        )
         t0 = time.time()
         results = pool.map(_run_game, worker_args)
         t_simulation = time.time() - t0
@@ -227,21 +312,67 @@ class LearningLoop:
         batch_trajectories = [t for _, t in results]
         total_steps = sum(len(t) for t in batch_trajectories)
 
+        print(
+            f"[main] simulation done in {t_simulation:.2f}s — "
+            f"total steps={total_steps}  "
+            f"avg reward={np.mean(batch_rewards):.4f}  "
+            f"reward std={np.std(batch_rewards):.4f}",
+            flush=True,
+        )
+
+        # ── Loss ──────────────────────────────────────────────────────
+        print(f"[main] computing REINFORCE loss on {self.device} ...", flush=True)
         t0 = time.time()
         loss = self._compute_reinforce_loss(batch_trajectories, batch_rewards)
         t_loss = time.time() - t0
+        print(
+            f"[main] loss={loss.item():.6f}  computed in {t_loss:.3f}s",
+            flush=True,
+        )
 
+        # ── Gradient step ─────────────────────────────────────────────
+        print(f"[main] backward + optimizer step ...", flush=True)
         t0 = time.time()
         self._gradient_step(loss)
         t_grad = time.time() - t0
+        print(
+            f"[main] grad step done in {t_grad:.3f}s  "
+            f"grad_norm={self._get_grad_norm():.4f}",
+            flush=True,
+        )
 
+        # ── Stats + logging ───────────────────────────────────────────
         t0 = time.time()
         action_stats = self._compute_action_stats(batch_trajectories)
         t_stats = time.time() - t0
 
-        t_total = time.time() - start_time
+        t_total = time.time() - t_epoch_start
         t_overhead = t_total - (t_simulation + t_loss + t_grad + t_stats)
         avg_reward = np.mean(batch_rewards)
+
+        print(
+            f"[main] action mix — "
+            f"fold={action_stats['action/fold']:.2%}  "
+            f"call={action_stats['action/call']:.2%}  "
+            f"bet={action_stats['action/bet']:.2%}  "
+            f"avg_bet={action_stats['action/bet_amount']:.2f}",
+            flush=True,
+        )
+        print(
+            f"[main] timing — "
+            f"total={t_total:.2f}s  "
+            f"sim={t_simulation:.2f}s ({t_simulation / t_total:.0%})  "
+            f"fwd={t_loss:.2f}s  "
+            f"bwd={t_grad:.2f}s  "
+            f"overhead={t_overhead:.2f}s",
+            flush=True,
+        )
+        print(
+            f"[main] epoch {epoch + 1} summary — "
+            f"loss={loss.item():.4f}  avg_reward={avg_reward:.4f}  "
+            f"steps/s={total_steps / t_total:.1f}",
+            flush=True,
+        )
 
         self._log_epoch(
             epoch=epoch,
@@ -259,29 +390,43 @@ class LearningLoop:
             t_overhead=t_overhead,
         )
 
-        print(
-            f"Epoch {epoch + 1}/{epochs} | "
-            f"loss: {loss.item():.4f} | avg reward: {avg_reward:.4f} | "
-            f"total: {t_total:.2f}s  sim: {t_simulation:.2f}s  "
-            f"fwd: {t_loss:.2f}s  bwd: {t_grad:.2f}s  "
-            f"overhead: {t_overhead:.2f}s | "
-            f"device: {self.device}"
+        # ── Checkpoint ────────────────────────────────────────────────
+        should_save = (
+            epoch % save_interval == 0 or epoch == self.config.get("epochs", 1000) - 1
         )
-
-        if epoch % save_interval == 0 or epoch == self.config.get("epochs", 1000) - 1:
+        if should_save:
+            print(f"[main] saving checkpoint for epoch {epoch} ...", flush=True)
             self.weight_manager.save(self.current_model, self.optimizer, epoch)
+            print(f"[main] checkpoint saved", flush=True)
+
+    # ------------------------------------------------------------------
+    # Worker args builder
+    # ------------------------------------------------------------------
 
     def _build_worker_args(self, state_dict, games_per_epoch, hands_per_game):
-        # model_class is no longer included — workers already have it from
-        # _worker_init, so we avoid pickling the class on every task.
-        return [
-            (
-                state_dict,
-                hands_per_game,
-                [self.weight_manager.sample_opponent_state_dict() for _ in range(5)],
-            )
-            for _ in range(games_per_epoch)
-        ]
+        """
+        Build one argument tuple per game.
+
+        Opponent state_dicts are sampled here on the main process (WeightManager
+        is not multiprocess-safe).  Each game receives independently sampled
+        opponents, preserving population diversity even though opponent slots
+        inside workers are reused across games.
+        """
+        args = []
+        for i in range(games_per_epoch):
+            opponent_state_dicts = [
+                self.weight_manager.sample_opponent_state_dict()
+                for _ in range(_MAX_OPPONENTS)
+            ]
+            n_none = sum(1 for osd in opponent_state_dicts if osd is None)
+            if n_none:
+                print(
+                    f"[main]   game {i}: {n_none}/{_MAX_OPPONENTS} opponents "
+                    f"have no checkpoint yet (will use random weights)",
+                    flush=True,
+                )
+            args.append((state_dict, hands_per_game, opponent_state_dicts))
+        return args
 
     # ------------------------------------------------------------------
     # Logging
@@ -356,8 +501,8 @@ class LearningLoop:
         where freq_a is the fraction of batch steps where action a was sampled.
         The penalty fires only when aggregate action frequencies exit [lo, hi]
         (default [0.01, 0.99]), leaving the model free to be confident on any
-        individual step.  diversity_coef is scaled by mean |reward| to stay
-        proportional to reward magnitude throughout training.
+        individual step.  diversity_coef is scaled by mean |reward| so the
+        penalty stays proportional to reward magnitude throughout training.
         """
         device = self.device
 
@@ -390,6 +535,10 @@ class LearningLoop:
                 action_probs_all.append(D.Categorical(logits=action_logits).probs)
 
         if not step_losses:
+            print(
+                "[main] WARNING: no steps found in trajectories — returning zero loss",
+                flush=True,
+            )
             return torch.tensor(0.0, requires_grad=False, device=device)
 
         reinforce_loss = torch.stack(step_losses).mean()
@@ -397,6 +546,12 @@ class LearningLoop:
             action_probs_all, batch_rewards
         )
 
+        print(
+            f"[main]   reinforce_loss={reinforce_loss.item():.6f}  "
+            f"diversity_penalty={diversity_penalty.item():.6f}  "
+            f"steps={len(step_losses)}",
+            flush=True,
+        )
         return reinforce_loss + diversity_penalty
 
     def _compute_diversity_penalty(
@@ -410,6 +565,12 @@ class LearningLoop:
         mean_probs = torch.stack(action_probs_all).mean(dim=0)  # (n_actions,)
         penalty = (torch.relu(mean_probs - hi) + torch.relu(lo - mean_probs)).sum()
 
+        print(
+            f"[main]   mean action probs — "
+            + "  ".join(f"a{i}={p:.3f}" for i, p in enumerate(mean_probs.tolist()))
+            + f"  coef={coef:.4f}",
+            flush=True,
+        )
         return coef * penalty
 
     # ------------------------------------------------------------------
@@ -419,6 +580,7 @@ class LearningLoop:
     def _gradient_step(self, loss: torch.Tensor):
         """Backprop + gradient clipping + optimizer step."""
         if not loss.requires_grad:
+            print("[main] WARNING: loss has no grad — skipping backward", flush=True)
             return
         self.optimizer.zero_grad()
         loss.backward()
@@ -426,7 +588,7 @@ class LearningLoop:
         self.optimizer.step()
 
     def _get_grad_norm(self) -> float:
-        """L2 norm of all gradients after backward()."""
+        """L2 norm of all parameter gradients after backward()."""
         total_norm = sum(
             p.grad.data.norm(2).item() ** 2
             for p in self.current_model.parameters()
