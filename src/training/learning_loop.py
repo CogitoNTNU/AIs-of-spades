@@ -532,7 +532,9 @@ class LearningLoop:
                 )
 
                 step_losses.append(-reward_tensor * (log_p_discrete + log_p_continuous))
-                action_probs_all.append(D.Categorical(logits=action_logits).probs)
+                action_probs_all.append(
+                    D.Categorical(logits=action_logits).probs.squeeze()
+                )
 
         if not step_losses:
             print(
