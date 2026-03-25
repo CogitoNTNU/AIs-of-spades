@@ -93,7 +93,7 @@ class WeightManager:
     # Public API
     # ------------------------------------------------------------------
 
-    def save(self, model: PokerNet, optimizer, epoch: int) -> None:
+    def save(self, model: PokerNet, optimizer, epoch: int, scheduler=None) -> None:
         path = self._model_dir / f"epoch_{epoch}.pt"
         checkpoint = {
             "model_state_dict": {
@@ -102,6 +102,8 @@ class WeightManager:
             "optimizer_state_dict": optimizer.state_dict(),
             "epoch": epoch,
         }
+        if scheduler is not None:
+            checkpoint["scheduler_state_dict"] = scheduler.state_dict()
         torch.save(checkpoint, path)
         print(f"Saved checkpoint: {path}")
 

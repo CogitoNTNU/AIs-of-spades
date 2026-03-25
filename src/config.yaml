@@ -7,6 +7,8 @@ weight_manager:
 
 learning_loop:
   learning_rate: 1e-3        
+  lr_decay_steps: 10   
+  lr_decay_gamma: 0.99 
   epochs: 10000
   games_per_epoch: 60
   hands_per_game: 32

@@ -117,6 +117,12 @@ class LearningLoop:
             lr=float(self.config.get("learning_rate", 1e-4)),
         )
 
+        self.scheduler = torch.optim.lr_scheduler.StepLR(
+            self.optimizer,
+            step_size=self.config.get("lr_decay_steps", 100),
+            gamma=self.config.get("lr_decay_gamma", 0.9),
+        )
+
         self.device: torch.device | None = None
 
     # ------------------------------------------------------------------
@@ -134,6 +140,8 @@ class LearningLoop:
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
         self.current_model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if "scheduler_state_dict" in checkpoint:
+            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         start_epoch = checkpoint["epoch"] + 1
         print(f"[main] resuming from epoch {start_epoch}", flush=True)
         return start_epoch
@@ -256,6 +264,7 @@ class LearningLoop:
         # ── Gradient step ─────────────────────────────────────────────
         t0 = time.time()
         self._gradient_step(loss)
+        self.scheduler.step()
         t_grad = time.time() - t0
 
         # ── Stats ─────────────────────────────────────────────────────
@@ -270,7 +279,7 @@ class LearningLoop:
         # ── One summary line per epoch ─────────────────────────────────
         probs_str = "  ".join(
             f"{name}={p:.2%}"
-            for name, p in zip(["fold", "call", "bet"], mean_probs.tolist())
+            for name, p in zip(["fold", "bet", "call"], mean_probs.tolist())
         )
         print(
             f"[{epoch + 1:>5}/{epochs}] "
@@ -311,7 +320,9 @@ class LearningLoop:
             epoch % save_interval == 0 or epoch == self.config.get("epochs", 1000) - 1
         )
         if should_save:
-            self.weight_manager.save(self.current_model, self.optimizer, epoch)
+            self.weight_manager.save(
+                self.current_model, self.optimizer, epoch, self.scheduler
+            )
             print(f"[{epoch + 1:>5}/{epochs}] checkpoint saved", flush=True)
 
     # ------------------------------------------------------------------
@@ -394,6 +405,7 @@ class LearningLoop:
                 ),
                 "train/total_steps": total_steps,
                 "train/grad_norm": self._get_grad_norm(),
+                "train/learning_rate": self.optimizer.param_groups[0]["lr"],
                 "train/diversity_coef_effective": diversity_coef_effective,
                 **action_stats,
             }
