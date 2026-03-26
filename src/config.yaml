@@ -6,7 +6,9 @@ weight_manager:
   sampling_mode: "linear"   # "uniform" or "linear" or "exponential"
 
 learning_loop:
-  learning_rate: 1e-3        
+  learning_rate: 1e-4        
+  lr_decay_steps: 10   
+  lr_decay_gamma: 0.99 
   epochs: 10000
   games_per_epoch: 60
   hands_per_game: 32
