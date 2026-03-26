@@ -74,9 +74,9 @@ def _run_game(args):
             opponents.append(slot)
 
         with torch.no_grad():
-            reward, trajectory = Game(opponents, _worker_model).play(hands_per_game)
+            trajectory = Game(opponents, _worker_model).play(hands_per_game)
 
-        return reward, trajectory
+        return trajectory
 
     except Exception:
         raise RuntimeError(
@@ -247,17 +247,17 @@ class LearningLoop:
 
         # ── Simulation ────────────────────────────────────────────────
         t0 = time.time()
-        results = pool.map(_run_game, worker_args)
+        batch_trajectories = pool.map(_run_game, worker_args)
         t_simulation = time.time() - t0
 
-        batch_rewards = [r for r, _ in results]
-        batch_trajectories = [t for _, t in results]
+        batch_rewards = [np.mean([step[2] for step in t]) for t in batch_trajectories if t]
+
         total_steps = sum(len(t) for t in batch_trajectories)
 
         # ── Loss ──────────────────────────────────────────────────────
         t0 = time.time()
         loss, mean_probs, diversity_penalty = self._compute_reinforce_loss(
-            batch_trajectories, batch_rewards
+            batch_trajectories
         )
         t_loss = time.time() - t0
 
@@ -416,7 +416,7 @@ class LearningLoop:
     # ------------------------------------------------------------------
 
     def _compute_reinforce_loss(
-        self, batch_trajectories: list, batch_rewards: list
+        self, batch_trajectories: list
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Compute the REINFORCE loss over a batch of episodes.
@@ -429,24 +429,32 @@ class LearningLoop:
         """
         device = self.device
 
-        advantages = np.array(batch_rewards, dtype=np.float32)
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        episode_rewards = np.array(
+            [t[0][2] for t in batch_trajectories if t],
+            dtype=np.float32,
+        )
 
-        # Flatten all trajectories into one, paired with their per-step advantage.
-        flat_trajectory = []
-        flat_advantages = []
-        for trajectory, advantage in zip(batch_trajectories, advantages):
-            if not trajectory:
-                continue
-            flat_trajectory.extend(trajectory)
-            flat_advantages.extend([advantage] * len(trajectory))
-
-        if not flat_trajectory:
-            print("[main] WARNING: no steps — returning zero loss", flush=True)
+        if episode_rewards.std() < 1e-8:
             zero = torch.tensor(0.0, requires_grad=False, device=device)
             return zero, torch.zeros(3, device=device), zero
 
-        # Single batched forward pass — the model handles its own preprocessing.
+        flat_trajectory = []
+        flat_advantages = []
+        reward_std = episode_rewards.std() + 1e-8
+        reward_mean = episode_rewards.mean()
+        for traj in batch_trajectories:
+            for preprocessed, action, reward in traj:
+                flat_trajectory.append((preprocessed, action))
+                flat_advantages.append((reward - reward_mean) / reward_std)
+
+        if not flat_trajectory:
+            zero = torch.tensor(0.0, device=device, requires_grad=True)
+            return (
+                zero * sum(p.sum() for p in self.current_model.parameters()),
+                torch.zeros(3, device=device),
+                torch.tensor(0.0, device=device),
+            )
+
         action_logits, bet_mean, bet_std = self.current_model.forward_batch(
             flat_trajectory
         )
@@ -459,18 +467,17 @@ class LearningLoop:
 
         log_p_discrete = D.Categorical(logits=action_logits).log_prob(action_batch)
         log_p_continuous = D.Normal(bet_mean, bet_std).log_prob(bet_batch).squeeze(-1)
-
         reinforce_loss = (-adv_batch * (log_p_discrete + log_p_continuous)).mean()
 
-        action_probs = D.Categorical(logits=action_logits).probs  # [N, 3]
+        action_probs = D.Categorical(logits=action_logits).probs
         diversity_penalty, mean_probs = self._compute_diversity_penalty(
-            action_probs, batch_rewards
+            action_probs, episode_rewards
         )
 
         return reinforce_loss + diversity_penalty, mean_probs, diversity_penalty
 
     def _compute_diversity_penalty(
-        self, action_probs: torch.Tensor, batch_rewards: list
+        self, action_probs: torch.Tensor, all_rewards: np.ndarray
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Penalise collapse toward a single action at the batch level.
@@ -490,12 +497,12 @@ class LearningLoop:
         """
         lo = float(self.config.get("diversity_lo", 0.01))
         hi = float(self.config.get("diversity_hi", 0.99))
-        reward_scale = float(np.mean(np.abs(batch_rewards)) + 1e-8)
+
+        reward_scale = max(float(np.mean(np.abs(all_rewards)) + 1e-8), 1.0)
         coef = float(self.config.get("diversity_coef", 0.1)) * reward_scale
 
-        mean_probs = action_probs.mean(dim=0)  # [3]
+        mean_probs = action_probs.mean(dim=0)
         penalty = (torch.relu(mean_probs - hi) + torch.relu(lo - mean_probs)).sum()
-
         return coef * penalty, mean_probs
 
     # ------------------------------------------------------------------
@@ -532,13 +539,12 @@ class LearningLoop:
         traj_lengths = [len(t) for t in batch_trajectories]
 
         for trajectory in batch_trajectories:
-            for _, action in trajectory:
+            for _, action, _ in trajectory:
                 counts[action.action_type] += 1
                 if action.action_type == PlayerAction.BET:
                     bet_amounts.append(action.bet_amount)
 
         total = sum(counts.values()) or 1
-
         return {
             "action/fold": counts[PlayerAction.FOLD] / total,
             "action/bet": counts[PlayerAction.BET] / total,

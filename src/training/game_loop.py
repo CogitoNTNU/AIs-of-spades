@@ -26,6 +26,7 @@ class Game:
 
     def reset(self):
         self.trajectory = []
+        self.hand_rewards = []
         self.reward = 0.0
 
         self.active_opponents = rn.randint(1, 5)
@@ -55,6 +56,7 @@ class Game:
             raise Exception("Table should not be None")
 
         for hand_index in range(total_hands):
+            hand_trajectory = []
             # End the game early if fewer than 2 players have chips to play.
             players_with_chips = sum(1 for a in self.agents if a.stack >= 1)
             if players_with_chips < 2:
@@ -85,7 +87,12 @@ class Game:
                 if acting_agent.state != PlayerState.ACTIVE or acting_agent.all_in:
                     self.table.hand_is_over = True
                     self.table._end_hand()
-                    rewards = np.asarray([p.get_reward() for p in sorted(self.agents)])
+                    rewards = np.asarray(
+                        [
+                            p.get_reward()
+                            for p in sorted(self.agents, key=lambda a: a.identifier)
+                        ]
+                    )
                     break
 
                 action = acting_agent.get_action(obs)
@@ -94,7 +101,7 @@ class Game:
                     # Preprocess here in the worker (CPU, parallel) so the main
                     # process only needs to stack tensors and run the GPU forward.
                     preprocessed = self.current_model.preprocess(obs)
-                    self.trajectory.append((preprocessed, action))
+                    hand_trajectory.append((preprocessed, action))
 
                 obs_array, rewards, done = self.table.step(action)
 
@@ -108,12 +115,13 @@ class Game:
 
             main_reward = rewards[0]
             if main_reward is not None:
-                self.reward += float(main_reward)
+                for item in hand_trajectory:
+                    self.trajectory.append((*item, main_reward))
 
             if self.agents[0].stack <= 0:
-                return self.reward, self.trajectory
+                return self.trajectory
 
-        return self.reward, self.trajectory
+        return self.trajectory
 
     def _get_point_of_view(self, player, hand_log):
         if player == 0:
