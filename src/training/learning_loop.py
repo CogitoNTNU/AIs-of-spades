@@ -59,7 +59,7 @@ def _worker_init(model_class):
 
 def _run_game(args):
     try:
-        state_dict, hands_per_game, opponent_state_dicts = args
+        state_dict, hands_per_game, opponent_state_dicts, game_config = args
 
         _worker_model.load_state_dict(state_dict)
         _worker_model.eval()
@@ -74,7 +74,9 @@ def _run_game(args):
             opponents.append(slot)
 
         with torch.no_grad():
-            trajectory = Game(opponents, _worker_model).play(hands_per_game)
+            trajectory = Game(opponents, _worker_model, game_config).play(
+                hands_per_game
+            )
 
         return trajectory
 
@@ -107,6 +109,7 @@ class LearningLoop:
     def __init__(self, weight_manager: WeightManager, config: dict):
         self.weight_manager = weight_manager
         self.config = config["learning_loop"]
+        self.game_config = config.get("game_loop", {})
         self.num_workers = self.config.get("num_workers", mp.cpu_count())
 
         model_class = config["weight_manager"]["model_class"]
@@ -250,7 +253,9 @@ class LearningLoop:
         batch_trajectories = pool.map(_run_game, worker_args)
         t_simulation = time.time() - t0
 
-        batch_rewards = [np.mean([step[2] for step in t]) for t in batch_trajectories if t]
+        batch_rewards = [
+            np.mean([step[2] for step in t]) for t in batch_trajectories if t
+        ]
 
         total_steps = sum(len(t) for t in batch_trajectories)
 
@@ -346,7 +351,7 @@ class LearningLoop:
                 for _ in range(_MAX_OPPONENTS)
             ]
             none_count += sum(1 for osd in opponent_state_dicts if osd is None)
-            args.append((state_dict, hands_per_game, opponent_state_dicts))
+            args.append((state_dict, hands_per_game, opponent_state_dicts, game_config))
 
         if none_count > 0:
             print(

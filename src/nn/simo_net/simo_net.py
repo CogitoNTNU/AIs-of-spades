@@ -159,119 +159,30 @@ class SimoNet(PokerNet):
     # Core forward  (single step, live simulation)
     # ------------------------------------------------------------------
 
-    def forward(
+    # ── Core encode (shared by forward and forward_batch) ─────────────────
+
+    def _encode(
         self,
-        observation: Observation,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        hole_cards: torch.Tensor,  # [B, 2, 2]
+        board_cards: torch.Tensor,  # [B, 5, 2]
+        board_mask: torch.Tensor,  # [B, 5]
+        bets: torch.Tensor,  # [B, 512]
+        obs_scalars: torch.Tensor,  # [B, 10]
+        opp_vecs: torch.Tensor,  # [B, 5, d_opp]
+        opp_mask: torch.Tensor,  # [B, 5]
+        hand_state: torch.Tensor,  # [B, hand_dim]
+        game_state: torch.Tensor,  # [B, game_dim]
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Single-step forward pass. Updates internal recurrent state.
-
-        Returns
-        -------
-        action_logits : [1, 3]   fold / call / bet
-        bet_mean      : [1, 1]   in (0, 1)
-        bet_std       : [1, 1]   > 0
+        Shared encode+decode path.  Returns (action_logits, bet_mean, bet_std).
+        Opponent shuffle is applied here when self.training and self.shuffle_opponents.
         """
-        if self._hand_state is None or self._game_state is None:
-            raise RuntimeError(
-                "Internal state not initialised. "
-                "Call initialize_internal_state() before the first forward()."
-            )
-
-        device = next(self.parameters()).device
-
-        p = preprocess_observation(observation)
-
-        def _to(t):
-            return t.to(device) if t is not None else None
-
-        hole_cards = _to(p.hole_cards).unsqueeze(0)  # [1, 2, 2]
-        board_cards = _to(p.board_cards).unsqueeze(0)  # [1, 5, 2]
-        board_mask = _to(p.board_mask).unsqueeze(0)  # [1, 5]
-        bets = _to(p.bets).unsqueeze(0)  # [1, 512]
-        obs_scalars = _to(p.obs_scalars).unsqueeze(0)  # [1, 10]
-        opp_vecs = _to(p.opp_vecs).unsqueeze(0)  # [1, 5, 8]
-        opp_mask = _to(p.opp_mask).unsqueeze(0)  # [1, 5]
-
-        hand_state = self._hand_state
-        game_state = self._game_state
-
-        # Persist the recurrent state snapshot into the observation so that
-        # forward_batch can replay this step with the correct context.
-        observation.add_network_internal_state({"hand": hand_state, "game": game_state})
-
-        # ── Opponent shuffle (training only) ───────────────────────────
         if self.shuffle_opponents and self.training:
+            device = opp_vecs.device
             perm = torch.randperm(MAX_OPPONENTS, device=device)
             opp_vecs = opp_vecs[:, perm, :]
             opp_mask = opp_mask[:, perm]
 
-        # ── Encode each stream → d_model ──────────────────────────────
-        f_cards = self.cards_encoder(
-            hole_cards, board_cards, board_mask
-        )  # [1, d_model]
-        f_bets = self.bets_encoder(bets)  # [1, d_model]
-        f_obs = self.obs_encoder(obs_scalars)  # [1, d_model]
-        f_hand = self.hand_state_proj(hand_state)  # [1, d_model]
-        f_game = self.game_state_proj(game_state)  # [1, d_model]
-        f_opp = self.opp_proj(opp_vecs)  # [1, 5, d_model]
-
-        # ── Transformer trunk → CLS ────────────────────────────────────
-        cls = self.trunk(f_cards, f_bets, f_obs, f_hand, f_game, f_opp, opp_mask)
-        # cls: [1, d_model]
-
-        # ── Output heads ──────────────────────────────────────────────
-        action_logits = self.policy_head(cls)  # [1, 3]
-        bet_mean = torch.sigmoid(self.bet_mean_head(cls))  # [1, 1]
-        bet_std = torch.exp(self.bet_std_head(cls)).clamp(min=1e-4, max=1.0)  # [1, 1]
-
-        # ── Update recurrent state (detached — no gradient through time) ─
-        self._hand_state = torch.tanh(self.hand_state_head(cls)).detach()
-        self._game_state = torch.tanh(self.game_state_head(cls)).detach()
-
-        return action_logits, bet_mean, bet_std
-
-    # ------------------------------------------------------------------
-    # Batched forward  (training replay, no state update)
-    # ------------------------------------------------------------------
-
-    def forward_batch(
-        self,
-        trajectory: list,  # list of (PreprocessedObs, Action)
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Batched forward pass over a full trajectory for REINFORCE training.
-        Receives pre-processed observations produced by preprocess().
-        Does NOT update internal recurrent state.
-
-        Returns
-        -------
-        action_logits : [N, 3]
-        bet_mean      : [N, 1]
-        bet_std       : [N, 1]
-        """
-        device = next(self.parameters()).device
-
-        ps: list[PreprocessedObs] = [p for p, _ in trajectory]
-
-        def stack(fn):
-            return torch.stack([fn(p) for p in ps]).to(device)
-
-        hole_cards = stack(lambda p: p.hole_cards)  # [N, 2, 2]
-        board_cards = stack(lambda p: p.board_cards)  # [N, 5, 2]
-        board_mask = stack(lambda p: p.board_mask)  # [N, 5]
-        bets = stack(lambda p: p.bets)  # [N, 512]
-        obs_scalars = stack(lambda p: p.obs_scalars)  # [N, 10]
-        opp_vecs = stack(lambda p: p.opp_vecs)  # [N, 5, 8]
-        opp_mask = stack(lambda p: p.opp_mask)  # [N, 5]
-        hand_state = stack(
-            lambda p: p.hand_state.reshape(self.hand_state_dim)
-        )  # [N, hand_dim]
-        game_state = stack(
-            lambda p: p.game_state.reshape(self.game_state_dim)
-        )  # [N, game_dim]
-
-        # ── Encode each stream → d_model ──────────────────────────────
         f_cards = self.cards_encoder(hole_cards, board_cards, board_mask)
         f_bets = self.bets_encoder(bets)
         f_obs = self.obs_encoder(obs_scalars)
@@ -279,12 +190,74 @@ class SimoNet(PokerNet):
         f_game = self.game_state_proj(game_state)
         f_opp = self.opp_proj(opp_vecs)
 
-        # ── Transformer trunk → CLS ────────────────────────────────────
         cls = self.trunk(f_cards, f_bets, f_obs, f_hand, f_game, f_opp, opp_mask)
 
-        # ── Output heads ──────────────────────────────────────────────
         action_logits = self.policy_head(cls)
         bet_mean = torch.sigmoid(self.bet_mean_head(cls))
         bet_std = torch.exp(self.bet_std_head(cls)).clamp(min=1e-4, max=1.0)
+
+        return (
+            action_logits,
+            bet_mean,
+            bet_std,
+            cls,
+        )  # cls needed by forward() for state update
+
+    def forward(
+        self, observation: Observation
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if self._hand_state is None or self._game_state is None:
+            raise RuntimeError(
+                "Internal state not initialised. "
+                "Call initialize_internal_state() before the first forward()."
+            )
+
+        device = next(self.parameters()).device
+        p = preprocess_observation(observation)
+
+        def _to(t):
+            return t.to(device) if t is not None else None
+
+        hand_state = self._hand_state
+        game_state = self._game_state
+        observation.add_network_internal_state({"hand": hand_state, "game": game_state})
+
+        action_logits, bet_mean, bet_std, cls = self._encode(
+            hole_cards=_to(p.hole_cards).unsqueeze(0),
+            board_cards=_to(p.board_cards).unsqueeze(0),
+            board_mask=_to(p.board_mask).unsqueeze(0),
+            bets=_to(p.bets).unsqueeze(0),
+            obs_scalars=_to(p.obs_scalars).unsqueeze(0),
+            opp_vecs=_to(p.opp_vecs).unsqueeze(0),
+            opp_mask=_to(p.opp_mask).unsqueeze(0),
+            hand_state=hand_state,
+            game_state=game_state,
+        )
+
+        self._hand_state = torch.tanh(self.hand_state_head(cls)).detach()
+        self._game_state = torch.tanh(self.game_state_head(cls)).detach()
+
+        return action_logits, bet_mean, bet_std
+
+    def forward_batch(
+        self, trajectory: list
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        device = next(self.parameters()).device
+        ps: list[PreprocessedObs] = [p for p, _ in trajectory]
+
+        def stack(fn):
+            return torch.stack([fn(p) for p in ps]).to(device)
+
+        action_logits, bet_mean, bet_std, _ = self._encode(
+            hole_cards=stack(lambda p: p.hole_cards),
+            board_cards=stack(lambda p: p.board_cards),
+            board_mask=stack(lambda p: p.board_mask),
+            bets=stack(lambda p: p.bets),
+            obs_scalars=stack(lambda p: p.obs_scalars),
+            opp_vecs=stack(lambda p: p.opp_vecs),
+            opp_mask=stack(lambda p: p.opp_mask),
+            hand_state=stack(lambda p: p.hand_state.reshape(self.hand_state_dim)),
+            game_state=stack(lambda p: p.game_state.reshape(self.game_state_dim)),
+        )
 
         return action_logits, bet_mean, bet_std

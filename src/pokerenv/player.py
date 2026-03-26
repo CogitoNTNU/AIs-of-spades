@@ -37,7 +37,7 @@ class Player(ABC):
         if self.has_acted:
             tmp = self.pending_penalty
             self.pending_penalty = 0
-            return tmp + self.winnings
+            return tmp + self.winnings - self.total_invested
         else:
             return None
 
