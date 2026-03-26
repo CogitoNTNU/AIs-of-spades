@@ -25,6 +25,7 @@ class WeightManager:
         self._cache: dict[str, dict] = {}
 
         self._model_dir.mkdir(parents=True, exist_ok=True)
+        self._reload_snapshots_from_disk()
 
     # ------------------------------------------------------------------
     # Internals
@@ -33,6 +34,21 @@ class WeightManager:
     @property
     def _model_dir(self) -> Path:
         return self.checkpoint_dir / self.model_class.__name__
+
+    def _reload_snapshots_from_disk(self) -> None:
+        paths = sorted(
+            self._model_dir.glob("epoch_*.pt"),
+            key=lambda p: int(p.stem.split("_")[1]),
+        )
+        self.snapshots = [
+            {"epoch": int(p.stem.split("_")[1]), "path": str(p)} for p in paths
+        ]
+        if self.snapshots:
+            print(
+                f"[WeightManager] trovati {len(self.snapshots)} checkpoint su disco "
+                f"(epoche {self.snapshots[0]['epoch']}–{self.snapshots[-1]['epoch']})",
+                flush=True,
+            )
 
     def _sample_snapshot(self) -> dict:
         """Return one snapshot metadata dict according to sampling_mode."""
