@@ -9,7 +9,6 @@ from nn.poker_net import PokerNet
 class WeightManager:
     def __init__(self, config: dict):
         self.model_class = config["model_class"]
-        self.models_dir = Path(config["models_dir"])
         self.max_models = config.get("max_models", 50)
         self.keep_latest = config.get("keep_latest", 20)
         self.sampling_mode = config.get("sampling_mode", "uniform")
@@ -26,7 +25,6 @@ class WeightManager:
         self._cache: dict[str, dict] = {}
 
         self._model_dir.mkdir(parents=True, exist_ok=True)
-        self.models_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Internals

@@ -11,11 +11,13 @@ MAIN_CHARACTER_NAME = "UGO"
 
 
 class Game:
-    def __init__(self, opponents: list, current_model):
+
+    def __init__(self, opponents: list, current_model, config):
         self.opponents = opponents  # list of 5 pre-built models
         self.current_model = current_model
         self.table = None
         self.agents = []
+        self.config = config
 
         # trajectory: list of (PreprocessedObs, Action)
         # Only steps where the main character acted are stored.
@@ -50,10 +52,28 @@ class Game:
         self.table.seed(None)
         self.table.reset()
 
+    def get_weighted_rewards(
+        self, hand_rewards: list, decadiment_factor: float = 0.0
+    ) -> list:
+        if len(hand_rewards) == 0:
+            return []
+        if len(hand_rewards) == 1:
+            return hand_rewards
+
+        weighted_rewards = self.get_weighted_rewards(
+            hand_rewards[1:], decadiment_factor
+        )
+        return [
+            hand_rewards[0] + weighted_rewards[0] * 0.8 / (1 + decadiment_factor)
+        ] + weighted_rewards
+
     def play(self, total_hands: int):
         self.reset()
         if self.table is None:
             raise Exception("Table should not be None")
+
+        rewards_trajectories = []
+        hands_trajectories = []
 
         for hand_index in range(total_hands):
             hand_trajectory = []
@@ -85,6 +105,7 @@ class Game:
                 acting_agent = self.agents[acting_player_i]
 
                 if acting_agent.state != PlayerState.ACTIVE or acting_agent.all_in:
+                    print("Table asked inactive player %d — forcing _end_hand")
                     self.table.hand_is_over = True
                     self.table._end_hand()
                     rewards = np.asarray(
@@ -115,11 +136,20 @@ class Game:
 
             main_reward = rewards[0]
             if main_reward is not None:
-                for item in hand_trajectory:
-                    self.trajectory.append((*item, main_reward))
+                rewards_trajectories.append(main_reward)
+                hands_trajectories.append(hand_trajectory)
 
             if self.agents[0].stack <= 0:
                 return self.trajectory
+
+        for hand_trajectory, reward in zip(
+            hands_trajectories,
+            self.get_weighted_rewards(
+                rewards_trajectories, self.config.get("decadiment_factor", 0.0)
+            ),
+        ):
+            for item in hand_trajectory:
+                self.trajectory.append((*item, reward))
 
         return self.trajectory
 
