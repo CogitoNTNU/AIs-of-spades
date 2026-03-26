@@ -351,7 +351,9 @@ class LearningLoop:
                 for _ in range(_MAX_OPPONENTS)
             ]
             none_count += sum(1 for osd in opponent_state_dicts if osd is None)
-            args.append((state_dict, hands_per_game, opponent_state_dicts, game_config))
+            args.append(
+                (state_dict, hands_per_game, opponent_state_dicts, self.game_config)
+            )
 
         if none_count > 0:
             print(
