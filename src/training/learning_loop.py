@@ -478,7 +478,7 @@ class LearningLoop:
         device = self.device
 
         episode_rewards = np.array(
-            [t[0][2] for t in batch_trajectories if t],
+            [reward for t in batch_trajectories for _, _, reward in t],
             dtype=np.float32,
         )
 
@@ -486,43 +486,29 @@ class LearningLoop:
             zero = torch.tensor(0.0, requires_grad=False, device=device)
             return zero, torch.zeros(3, device=device), zero, 0.0, 0.0
 
-        flat_trajectory = []
-        flat_advantages = []
-        flat_action_indices = []  # track which action each step took
-
         reward_std = episode_rewards.std() + 1e-8
         reward_mean = episode_rewards.mean()
 
+        # ── Single pass: collect flat data ───────────────────────────────
+        # Pre-count total steps to pre-allocate numpy arrays and avoid
+        # repeated list.append() + torch.stack() overhead.
+        total_steps = sum(len(t) for t in batch_trajectories)
+
+        flat_preprocessed = [None] * total_steps  # kept as list — opaque objects
+        flat_actions = [None] * total_steps
+        raw_rewards = np.empty(total_steps, dtype=np.float64)
+        action_indices = np.empty(total_steps, dtype=np.int64)
+
+        idx = 0
         for traj in batch_trajectories:
             for preprocessed, action, reward in traj:
-                flat_trajectory.append((preprocessed, action))
+                flat_preprocessed[idx] = preprocessed
+                flat_actions[idx] = action
+                raw_rewards[idx] = reward
+                action_indices[idx] = int(action.action_tensor.item())
+                idx += 1
 
-                # Global normalisation
-                normalized_reward = (reward - reward_mean) / reward_std
-
-                # Per-action baseline correction
-                action_idx = int(action.action_tensor.item())
-                per_action_advantage = (
-                    normalized_reward - self._action_baselines[action_idx]
-                )
-                flat_advantages.append(per_action_advantage)
-                flat_action_indices.append(action_idx)
-
-        alpha = self._action_baseline_alpha
-        for action_idx in range(3):
-            rewards_for_action = [
-                (reward - reward_mean) / reward_std
-                for traj in batch_trajectories
-                for _, action, reward in traj
-                if int(action.action_tensor.item()) == action_idx
-            ]
-            if rewards_for_action:
-                epoch_mean = np.mean(rewards_for_action)
-                self._action_baselines[action_idx] = (
-                    1 - alpha
-                ) * self._action_baselines[action_idx] + alpha * epoch_mean
-
-        if not flat_trajectory:
+        if idx == 0:
             zero = torch.tensor(0.0, device=device, requires_grad=True)
             return (
                 zero * sum(p.sum() for p in self.current_model.parameters()),
@@ -532,15 +518,33 @@ class LearningLoop:
                 0.0,
             )
 
+        # ── Normalise rewards and compute per-action advantages ──────────
+        norm_rewards = (raw_rewards - reward_mean) / reward_std  # shape [N]
+
+        # Vectorised per-action baseline correction: advantages[i] =
+        # norm_rewards[i] - baseline[action_indices[i]]
+        advantages = norm_rewards - self._action_baselines[action_indices]
+
+        # ── Update per-action baselines (single vectorised pass) ─────────
+        alpha = self._action_baseline_alpha
+        for action_idx in range(3):
+            mask = action_indices == action_idx
+            if mask.any():
+                epoch_mean = norm_rewards[mask].mean()
+                self._action_baselines[action_idx] = (
+                    1 - alpha
+                ) * self._action_baselines[action_idx] + alpha * epoch_mean
+
+        # ── Forward pass ─────────────────────────────────────────────────
+        flat_trajectory = list(zip(flat_preprocessed, flat_actions))
         action_logits, bet_mean, bet_std = self.current_model.forward_batch(
             flat_trajectory
         )
 
-        action_batch = torch.stack([a.action_tensor for _, a in flat_trajectory]).to(
-            device
-        )
-        bet_batch = torch.stack([a.bet_tensor for _, a in flat_trajectory]).to(device)
-        adv_batch = torch.tensor(flat_advantages, dtype=torch.float32, device=device)
+        # Stack tensors in one shot — avoids N small allocations
+        action_batch = torch.stack([a.action_tensor for a in flat_actions]).to(device)
+        bet_batch = torch.stack([a.bet_tensor for a in flat_actions]).to(device)
+        adv_batch = torch.tensor(advantages, dtype=torch.float32, device=device)
 
         log_p_discrete = D.Categorical(logits=action_logits).log_prob(action_batch)
         log_p_continuous = D.Normal(bet_mean, bet_std).log_prob(bet_batch).squeeze(-1)
