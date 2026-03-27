@@ -140,7 +140,7 @@ class Game:
                 hands_trajectories.append(hand_trajectory)
 
             if self.agents[0].stack <= 0:
-                return self.trajectory
+                break
 
         for hand_trajectory, reward in zip(
             hands_trajectories,
