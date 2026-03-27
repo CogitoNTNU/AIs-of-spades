@@ -106,6 +106,7 @@ def _build_model(model_class, state_dict=None):
 
 
 class LearningLoop:
+
     def __init__(self, weight_manager: WeightManager, config: dict):
         self.weight_manager = weight_manager
         self.config = config["learning_loop"]
@@ -127,6 +128,13 @@ class LearningLoop:
         )
 
         self.device: torch.device | None = None
+
+        # Per-action baselines: fold=0, bet=1, call=2
+        # Exponential moving average of reward per action type.
+        self._action_baselines = np.zeros(3, dtype=np.float64)
+        self._action_baseline_alpha = float(
+            self.config.get("action_baseline_alpha", 0.01)
+        )
 
     # ------------------------------------------------------------------
     # Checkpoint management
@@ -242,7 +250,6 @@ class LearningLoop:
     ):
         t_epoch_start = time.time()
 
-        # Serialize weights once; each worker deserializes its own copy.
         state_dict = {k: v.cpu() for k, v in self.current_model.state_dict().items()}
         worker_args = self._build_worker_args(
             state_dict, games_per_epoch, hands_per_game
@@ -261,8 +268,8 @@ class LearningLoop:
 
         # ── Loss ──────────────────────────────────────────────────────
         t0 = time.time()
-        loss, mean_probs, diversity_penalty = self._compute_reinforce_loss(
-            batch_trajectories
+        loss, mean_probs, diversity_penalty, loss_discrete, loss_continuous = (
+            self._compute_reinforce_loss(batch_trajectories)
         )
         t_loss = time.time() - t0
 
@@ -281,10 +288,13 @@ class LearningLoop:
         avg_reward = np.mean(batch_rewards)
         grad_norm = self._get_grad_norm()
 
-        # ── One summary line per epoch ─────────────────────────────────
         probs_str = "  ".join(
             f"{name}={p:.2%}"
             for name, p in zip(["fold", "bet", "call"], mean_probs.tolist())
+        )
+        baselines_str = "  ".join(
+            f"{name}_bl={b:.3f}"
+            for name, b in zip(["fold", "bet", "call"], self._action_baselines)
         )
         print(
             f"[{epoch + 1:>5}/{epochs}] "
@@ -293,6 +303,12 @@ class LearningLoop:
             f"steps={total_steps:>5}  {probs_str}  "
             f"grad={grad_norm:.3f}  "
             f"sim={t_simulation:.1f}s  fwd={t_loss:.1f}s  bwd={t_grad:.1f}s",
+            flush=True,
+        )
+        print(
+            f"[{epoch + 1:>5}/{epochs}] "
+            f"loss_disc={loss_discrete:+.4f}  loss_cont={loss_continuous:+.4f}  "
+            f"{baselines_str}",
             flush=True,
         )
 
@@ -307,6 +323,8 @@ class LearningLoop:
         self._log_epoch(
             epoch=epoch,
             loss=loss,
+            loss_discrete=loss_discrete,
+            loss_continuous=loss_continuous,
             avg_reward=avg_reward,
             batch_rewards=batch_rewards,
             batch_trajectories=batch_trajectories,
@@ -326,7 +344,11 @@ class LearningLoop:
         )
         if should_save:
             self.weight_manager.save(
-                self.current_model, self.optimizer, epoch, self.scheduler
+                self.current_model,
+                self.optimizer,
+                epoch,
+                self.scheduler,
+                self._action_baselines,
             )
             print(f"[{epoch + 1:>5}/{epochs}] checkpoint saved", flush=True)
 
@@ -371,6 +393,8 @@ class LearningLoop:
         self,
         epoch,
         loss,
+        loss_discrete,
+        loss_continuous,
         avg_reward,
         batch_rewards,
         batch_trajectories,
@@ -403,6 +427,8 @@ class LearningLoop:
                 "time/frac_gpu": (t_loss + t_grad) / t_total if t_total > 0 else 0.0,
                 # Training signal
                 "train/loss": loss.item() if loss.requires_grad else 0.0,
+                "train/loss_discrete": loss_discrete,
+                "train/loss_continuous": loss_continuous,
                 "train/avg_reward": avg_reward,
                 "train/reward_std": np.std(batch_rewards),
                 "train/reward_max": np.max(batch_rewards),
@@ -414,6 +440,10 @@ class LearningLoop:
                 "train/grad_norm": self._get_grad_norm(),
                 "train/learning_rate": self.optimizer.param_groups[0]["lr"],
                 "train/diversity_coef_effective": diversity_coef_effective,
+                # Per-action baselines
+                "baseline/fold": self._action_baselines[0],
+                "baseline/bet": self._action_baselines[1],
+                "baseline/call": self._action_baselines[2],
                 **action_stats,
             }
         )
@@ -421,18 +451,27 @@ class LearningLoop:
     # ------------------------------------------------------------------
     # REINFORCE
     # ------------------------------------------------------------------
-
     def _compute_reinforce_loss(
         self, batch_trajectories: list
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, float]:
         """
         Compute the REINFORCE loss over a batch of episodes.
 
+        Per-action baselines
+        --------------------
+        In addition to the global mean/std normalisation, each step's
+        advantage is further adjusted by a per-action exponential moving
+        baseline.  This corrects the structural bias where fold and call
+        look unconditionally bad because their immediate reward is zero,
+        while bet can occasionally win a pot.
+
         Returns
         -------
-        loss             : scalar tensor (reinforce + diversity penalty)
-        mean_probs       : [3] mean action probabilities across all steps
-        diversity_penalty: scalar tensor (zero if no collapse detected)
+        loss                  : scalar tensor (reinforce + diversity penalty)
+        mean_probs            : [3] mean action probabilities across all steps
+        diversity_penalty     : scalar tensor
+        reinforce_discrete_mean : float  (for logging)
+        reinforce_continuous_mean : float  (for logging)
         """
         device = self.device
 
@@ -443,16 +482,43 @@ class LearningLoop:
 
         if episode_rewards.std() < 1e-8:
             zero = torch.tensor(0.0, requires_grad=False, device=device)
-            return zero, torch.zeros(3, device=device), zero
+            return zero, torch.zeros(3, device=device), zero, 0.0, 0.0
 
         flat_trajectory = []
         flat_advantages = []
+        flat_action_indices = []  # track which action each step took
+
         reward_std = episode_rewards.std() + 1e-8
         reward_mean = episode_rewards.mean()
+
         for traj in batch_trajectories:
             for preprocessed, action, reward in traj:
                 flat_trajectory.append((preprocessed, action))
-                flat_advantages.append((reward - reward_mean) / reward_std)
+
+                # Global normalisation
+                normalized_reward = (reward - reward_mean) / reward_std
+
+                # Per-action baseline correction
+                action_idx = int(action.action_tensor.item())
+                per_action_advantage = (
+                    normalized_reward - self._action_baselines[action_idx]
+                )
+                flat_advantages.append(per_action_advantage)
+                flat_action_indices.append(action_idx)
+
+        alpha = self._action_baseline_alpha
+        for action_idx in range(3):
+            rewards_for_action = [
+                (reward - reward_mean) / reward_std
+                for traj in batch_trajectories
+                for _, action, reward in traj
+                if int(action.action_tensor.item()) == action_idx
+            ]
+            if rewards_for_action:
+                epoch_mean = np.mean(rewards_for_action)
+                self._action_baselines[action_idx] = (
+                    1 - alpha
+                ) * self._action_baselines[action_idx] + alpha * epoch_mean
 
         if not flat_trajectory:
             zero = torch.tensor(0.0, device=device, requires_grad=True)
@@ -460,6 +526,8 @@ class LearningLoop:
                 zero * sum(p.sum() for p in self.current_model.parameters()),
                 torch.zeros(3, device=device),
                 torch.tensor(0.0, device=device),
+                0.0,
+                0.0,
             )
 
         action_logits, bet_mean, bet_std = self.current_model.forward_batch(
@@ -474,14 +542,24 @@ class LearningLoop:
 
         log_p_discrete = D.Categorical(logits=action_logits).log_prob(action_batch)
         log_p_continuous = D.Normal(bet_mean, bet_std).log_prob(bet_batch).squeeze(-1)
-        reinforce_loss = (-adv_batch * (log_p_discrete + log_p_continuous)).mean()
+
+        # Separate losses for monitoring
+        reinforce_discrete = -adv_batch * log_p_discrete
+        reinforce_continuous = -adv_batch * log_p_continuous
+        reinforce_loss = (reinforce_discrete + reinforce_continuous).mean()
 
         action_probs = D.Categorical(logits=action_logits).probs
         diversity_penalty, mean_probs = self._compute_diversity_penalty(
             action_probs, episode_rewards
         )
 
-        return reinforce_loss + diversity_penalty, mean_probs, diversity_penalty
+        return (
+            reinforce_loss + diversity_penalty,
+            mean_probs,
+            diversity_penalty,
+            reinforce_discrete.mean().item(),
+            reinforce_continuous.mean().item(),
+        )
 
     def _compute_diversity_penalty(
         self, action_probs: torch.Tensor, all_rewards: np.ndarray
