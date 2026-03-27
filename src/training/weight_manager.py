@@ -75,7 +75,7 @@ class WeightManager:
         if path in self._cache:
             return self._cache[path]
 
-        checkpoint = torch.load(path, map_location="cpu")
+        checkpoint = torch.load(path, map_location="cpu", weights_only=True)
         state_dict = checkpoint.get("model_state_dict", checkpoint)
 
         # Evict oldest cache entry if the cache is full.
@@ -126,7 +126,7 @@ class WeightManager:
         if scheduler is not None:
             checkpoint["scheduler_state_dict"] = scheduler.state_dict()
         if action_baselines is not None:
-            checkpoint["action_baselines"] = action_baselines.copy()
+            checkpoint["action_baselines"] = action_baselines.tolist()
         torch.save(checkpoint, path)
         print(f"Saved checkpoint: {path}")
 
