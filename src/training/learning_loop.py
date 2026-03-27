@@ -153,6 +153,8 @@ class LearningLoop:
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if "scheduler_state_dict" in checkpoint:
             self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        if "action_baselines" in checkpoint:
+            self._action_baselines = checkpoint["action_baselines"]
         start_epoch = checkpoint["epoch"] + 1
         print(f"[main] resuming from epoch {start_epoch}", flush=True)
         return start_epoch
