@@ -29,8 +29,10 @@ def print_model_summary(model, model_name: str) -> None:
 
 
 def find_latest_checkpoint(config: dict) -> str | None:
-    """Return the path of the most recent checkpoint, or None if none exist."""
-    model_class_name = config["weight_manager"]["model_class"]
+    model_class = config["weight_manager"]["model_class"]
+    model_class_name = (
+        model_class.__name__ if isinstance(model_class, type) else model_class
+    )
     checkpoint_dir = Path(config["weight_manager"].get("checkpoint_dir", "checkpoints"))
     model_dir = checkpoint_dir / model_class_name
     checkpoints = sorted(
