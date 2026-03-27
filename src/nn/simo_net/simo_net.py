@@ -94,9 +94,7 @@ class SimoNet(PokerNet):
             out_dim=d_model,
         )
         self.bets_encoder = BetsNN(
-            in_dim=bets_in_dim,
-            hidden_dim=bets_hidden,
-            out_dim=d_model,
+            seq_len=64, action_feat_dim=8, d_model=bets_hidden, out_dim=d_model
         )
         self.obs_encoder = ObsNN(
             in_dim=obs_in_dim,
@@ -256,8 +254,12 @@ class SimoNet(PokerNet):
             obs_scalars=stack(lambda p: p.obs_scalars),
             opp_vecs=stack(lambda p: p.opp_vecs),
             opp_mask=stack(lambda p: p.opp_mask),
-            hand_state=stack(lambda p: p.hand_state.reshape(self.hand_state_dim)),
-            game_state=stack(lambda p: p.game_state.reshape(self.game_state_dim)),
+            hand_state=stack(
+                lambda p: p.hand_state.reshape(self.hand_state_dim)
+            ).detach(),
+            game_state=stack(
+                lambda p: p.game_state.reshape(self.game_state_dim)
+            ).detach(),
         )
 
         return action_logits, bet_mean, bet_std

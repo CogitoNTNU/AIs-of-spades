@@ -79,7 +79,7 @@ def preprocess_observation(observation: Observation) -> PreprocessedObs:
 
     # ── HAND LOG (bet history) ────────────────────────────────────────
     # hand_log shape: [64, 8]  → flatten → [512]
-    bets = torch.from_numpy(observation.hand_log).float().flatten()
+    bets = torch.from_numpy(observation.hand_log).float()
 
     # ── OBS SCALARS (self features, 10 values) ────────────────────────
     self_feats = torch.tensor(
