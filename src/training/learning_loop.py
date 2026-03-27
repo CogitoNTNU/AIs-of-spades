@@ -461,11 +461,11 @@ class LearningLoop:
 
         Per-action baselines
         --------------------
-        In addition to the global mean/std normalisation, each step's
-        advantage is further adjusted by a per-action exponential moving
-        baseline.  This corrects the structural bias where fold and call
-        look unconditionally bad because their immediate reward is zero,
-        while bet can occasionally win a pot.
+        Baselines are tracked on RAW rewards (chip values) to maintain a
+        stationary target across epochs.  The per-action advantage is then
+        normalised globally for stable gradient magnitudes.  This avoids the
+        feedback loop that arises when baselines chase normalised rewards whose
+        scale shifts every epoch.
 
         Returns
         -------
@@ -485,9 +485,6 @@ class LearningLoop:
         if episode_rewards.std() < 1e-8:
             zero = torch.tensor(0.0, requires_grad=False, device=device)
             return zero, torch.zeros(3, device=device), zero, 0.0, 0.0
-
-        reward_std = episode_rewards.std() + 1e-8
-        reward_mean = episode_rewards.mean()
 
         # ── Single pass: collect flat data ───────────────────────────────
         # Pre-count total steps to pre-allocate numpy arrays and avoid
@@ -518,22 +515,25 @@ class LearningLoop:
                 0.0,
             )
 
-        # ── Normalise rewards and compute per-action advantages ──────────
-        norm_rewards = (raw_rewards - reward_mean) / reward_std  # shape [N]
-
-        # Vectorised per-action baseline correction: advantages[i] =
-        # norm_rewards[i] - baseline[action_indices[i]]
-        advantages = norm_rewards - self._action_baselines[action_indices]
-
-        # ── Update per-action baselines (single vectorised pass) ─────────
         alpha = self._action_baseline_alpha
         for action_idx in range(3):
             mask = action_indices == action_idx
             if mask.any():
-                epoch_mean = norm_rewards[mask].mean()
+                epoch_mean = raw_rewards[mask].mean()
                 self._action_baselines[action_idx] = (
                     1 - alpha
                 ) * self._action_baselines[action_idx] + alpha * epoch_mean
+
+        # ── Compute per-action advantages on raw rewards ─────────────────
+        # advantages[i] = raw_reward[i] - baseline[action_indices[i]]
+        raw_advantages = raw_rewards - self._action_baselines[action_indices]
+
+        # ── Normalise advantages globally ────────────────────────────────
+        # Normalisation is applied to advantages (not raw rewards) so gradient
+        # magnitudes stay stable while baseline semantics remain interpretable.
+        adv_std = raw_advantages.std() + 1e-8
+        adv_mean = raw_advantages.mean()
+        advantages = (raw_advantages - adv_mean) / adv_std
 
         # ── Forward pass ─────────────────────────────────────────────────
         flat_trajectory = list(zip(flat_preprocessed, flat_actions))
