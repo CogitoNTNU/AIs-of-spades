@@ -52,20 +52,13 @@ class Game:
         self.table.seed(None)
         self.table.reset()
 
-    def get_weighted_rewards(
-        self, hand_rewards: list, decadiment_factor: float = 0.0
-    ) -> list:
+    def get_weighted_rewards(self, hand_rewards: list, gamma: float = 0.8) -> list:
         if len(hand_rewards) == 0:
             return []
         if len(hand_rewards) == 1:
             return hand_rewards
-
-        weighted_rewards = self.get_weighted_rewards(
-            hand_rewards[1:], decadiment_factor
-        )
-        return [
-            hand_rewards[0] + weighted_rewards[0] * 0.8 / (1 + decadiment_factor)
-        ] + weighted_rewards
+        weighted_rewards = self.get_weighted_rewards(hand_rewards[1:], gamma)
+        return [hand_rewards[0] + gamma * weighted_rewards[0]] + weighted_rewards
 
     def play(self, total_hands: int):
         self.reset()
