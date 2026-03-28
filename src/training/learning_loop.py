@@ -132,6 +132,7 @@ class LearningLoop:
         # Per-action baselines: fold=0, bet=1, call=2
         # Exponential moving average of reward per action type.
         self._action_baselines = np.zeros(3, dtype=np.float64)
+        self._action_baselines_initialized = False
         self._action_baseline_alpha = float(
             self.config.get("action_baseline_alpha", 0.01)
         )
@@ -520,9 +521,14 @@ class LearningLoop:
             mask = action_indices == action_idx
             if mask.any():
                 epoch_mean = raw_rewards[mask].mean()
-                self._action_baselines[action_idx] = (
-                    1 - alpha
-                ) * self._action_baselines[action_idx] + alpha * epoch_mean
+                if self._action_baselines_initialized:
+                    self._action_baselines[action_idx] = (
+                        1 - alpha
+                    ) * self._action_baselines[action_idx] + alpha * epoch_mean
+                else:
+                    self._action_baselines[action_idx] = epoch_mean
+
+        self._action_baselines_initialized = True
 
         # ── Compute per-action advantages on raw rewards ─────────────────
         # advantages[i] = raw_reward[i] - baseline[action_indices[i]]
