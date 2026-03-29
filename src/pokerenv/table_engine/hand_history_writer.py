@@ -84,7 +84,7 @@ class HandHistoryWriter:
         if not self.enabled:
             return
         self.history.append("*** SHOW DOWN ***")
-        active_players = [p for p in players if p.state is PlayerState.ACTIVE]
+        active_players = [p for p in players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)]
         hand_types = [
             evaluator.class_to_string(evaluator.get_rank_class(p.hand_rank))
             for p in active_players

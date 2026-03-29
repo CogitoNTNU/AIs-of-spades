@@ -226,7 +226,7 @@ class Game:
 
                 acting_agent = self.agents[acting_player_i]
 
-                if acting_agent.state != PlayerState.ACTIVE or acting_agent.all_in:
+                if acting_agent.state is not PlayerState.ACTIVE:
                     print(
                         f"Table asked inactive player {acting_player_i} — forcing _end_hand"
                     )
@@ -254,7 +254,7 @@ class Game:
                     players_in_hand = sum(
                         1
                         for a in self.agents
-                        if a.state == PlayerState.ACTIVE or a.all_in
+                        if a.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)
                     )
                     reached_showdown = players_in_hand > 1
                     active_count = players_in_hand
