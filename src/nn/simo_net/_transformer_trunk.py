@@ -62,7 +62,11 @@ class TransformerTrunk(nn.Module):
             batch_first=True,
             norm_first=True,  # Pre-LN: more stable gradients than Post-LN
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=n_layers,
+            enable_nested_tensor=False,
+        )
 
     def forward(
         self,
