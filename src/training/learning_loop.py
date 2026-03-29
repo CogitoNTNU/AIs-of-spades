@@ -718,7 +718,7 @@ class LearningLoop:
         for trajectory in batch_trajectories:
             for _, action, _ in trajectory:
                 counts[action.action_type] += 1
-                if action.action_type == PlayerAction.BET:
+                if action.action_type == PlayerAction.BET and action.observation.bet_range.lower_bound > 0:
                     bet_amounts.append(action.bet_amount)
 
         total = sum(counts.values()) or 1

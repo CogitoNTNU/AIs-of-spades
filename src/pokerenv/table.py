@@ -253,10 +253,11 @@ class Table(gym.Env):
         action_list = valid_actions["actions_list"]
         bet_range = valid_actions["bet_range"]
 
-        # Se l'azione richiesta non è disponibile o la bet è fuori range → FOLD
+        # Se l'azione richiesta non è disponibile → FOLD, eccetto BET → CALL
         if action.action_type not in action_list:
+            fallback = PlayerAction.CALL if action.action_type is PlayerAction.BET else PlayerAction.FOLD
             action = Action(
-                action_type=PlayerAction.FOLD,
+                action_type=fallback,
                 action_tensor=action.action_tensor,
                 observation=action.observation,
                 bet_amount=0.0,
@@ -278,7 +279,7 @@ class Table(gym.Env):
             )
             if out_of_range or approx_gt(action.bet_amount, player.stack):
                 action = Action(
-                    action_type=PlayerAction.FOLD,
+                    action_type=PlayerAction.CALL,
                     action_tensor=action.action_tensor,
                     observation=action.observation,
                     bet_amount=0.0,
