@@ -599,16 +599,20 @@ class LearningLoop:
         # ── Discrete loss ─────────────────────────────────────────────────
         log_p_discrete = D.Categorical(logits=action_logits).log_prob(action_batch)
         reinforce_discrete = -adv_batch * log_p_discrete
+        disc_loss = reinforce_discrete.mean()
 
         # ── Continuous loss — BET steps only ─────────────────────────────
-        # Masking prevents spurious gradients on bet_mean/bet_std from the
-        # placeholder bet_tensor values stored for FOLD and CALL actions.
         is_bet = (action_batch == 1).float()
         n_bets = is_bet.sum().clamp(min=1.0)
-        log_p_continuous = D.Normal(bet_mean, bet_std).log_prob(bet_batch).squeeze(-1)
+        bet_std_clamped = bet_std.clamp(min=0.05)
+        log_p_continuous = (
+            D.Normal(bet_mean, bet_std_clamped).log_prob(bet_batch).squeeze(-1)
+        ).clamp(-5.0, 5.0)
         reinforce_continuous = -adv_batch * log_p_continuous * is_bet
+        cont_loss = reinforce_continuous.sum() / n_bets
 
-        reinforce_loss = reinforce_discrete.mean() + reinforce_continuous.sum() / n_bets
+        continuous_weight = float(self.config.get("continuous_weight", 0.01))
+        reinforce_loss = disc_loss + continuous_weight * cont_loss
 
         action_probs = D.Categorical(logits=action_logits).probs
         diversity_penalty, mean_probs = self._compute_diversity_penalty(
@@ -616,10 +620,12 @@ class LearningLoop:
         )
 
         # ── Per-action advantage stats for logging ────────────────────────
-        # Accumulated here and returned as a dict so _log_epoch can emit
-        # them in a single wandb.log() call — multiple calls per epoch
-        # create phantom steps in wandb charts.
         adv_stats = {}
+        adv_stats["loss/continuous_weight"] = continuous_weight
+        adv_stats["loss/disc_magnitude"] = disc_loss.abs().item()
+        adv_stats["loss/cont_magnitude"] = cont_loss.abs().item()
+        adv_stats["loss/cont_weighted"] = (continuous_weight * cont_loss).abs().item()
+
         for action_idx, name in enumerate(["fold", "bet", "call"]):
             mask = action_indices == action_idx
             if mask.any():
@@ -631,8 +637,8 @@ class LearningLoop:
             reinforce_loss + diversity_penalty,
             mean_probs,
             diversity_penalty,
-            reinforce_discrete.mean().item(),
-            (reinforce_continuous.sum() / n_bets).item(),
+            disc_loss.item(),
+            (continuous_weight * cont_loss).item(),
             adv_stats,
         )
 

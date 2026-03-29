@@ -18,6 +18,7 @@ learning_loop:
   diversity_lo: 0.05
   diversity_hi: 0.90
   action_baseline_window: 50
+  continuous_weight: 0.001
 
 game_loop:
   decadiment_factor: 0.8

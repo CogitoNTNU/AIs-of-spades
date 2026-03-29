@@ -1,3 +1,4 @@
+import time
 import random as rn
 import numpy as np
 
@@ -28,8 +29,8 @@ class Game:
         self._isolation_bonus = float(config.get("isolation_bonus", 0.0))
         self._showdown_bonus = float(config.get("showdown_bonus", 0.0))
         self._steal_bonus = float(config.get("steal_bonus", 0.0))
-        self._stack_lo = int(config.get("stack_lo", 50.0))
-        self._stack_hi = int(config.get("stack_hi", 50.0))
+        self._stack_lo = int(config.get("stack_lo", 50))
+        self._stack_hi = int(config.get("stack_hi", 200))
 
     # ------------------------------------------------------------------
     # Setup
@@ -67,16 +68,18 @@ class Game:
 
     def get_weighted_rewards(self, hand_rewards: list, gamma: float = 0.8) -> list:
         """
-        Recursively apply temporal discounting across hands.
+        Iterative discounted return computation across hands.
         Each hand's reward incorporates a discounted sum of future hands,
         so decisions early in the session receive credit for downstream outcomes.
+        Iterative implementation avoids recursion overhead and list copying.
         """
-        if len(hand_rewards) == 0:
+        n = len(hand_rewards)
+        if n == 0:
             return []
-        if len(hand_rewards) == 1:
-            return hand_rewards
-        weighted = self.get_weighted_rewards(hand_rewards[1:], gamma)
-        return [hand_rewards[0] + gamma * weighted[0]] + weighted
+        result = list(hand_rewards)
+        for i in range(n - 2, -1, -1):
+            result[i] += gamma * result[i + 1]
+        return result
 
     def _stack_snapshot(self) -> dict:
         """
@@ -246,9 +249,8 @@ class Game:
                 obs_array, rewards, done = self.table.step(action)
 
                 if done:
-                    # Determine whether a showdown occurred by counting players
-                    # who were still in the hand (active or all-in) at resolution.
-                    # This is read before any further state mutation.
+                    # Count players still in the hand at resolution —
+                    # read before any further state mutation.
                     players_in_hand = sum(
                         1
                         for a in self.agents
