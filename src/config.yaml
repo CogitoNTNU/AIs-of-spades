@@ -19,6 +19,7 @@ learning_loop:
   diversity_hi: 0.90
   action_baseline_window: 50
   continuous_weight: 0.01
+  grad_clip_norm: 1.0
 
 game_loop:
   decadiment_factor: 0.8
@@ -31,4 +32,4 @@ game_loop:
   stack_hi:          200.0
   showdown_reward_multiplier_start:  2.0   # multiplier at epoch 0
   showdown_reward_multiplier_end:    1.0   # multiplier once decay is complete
-  showdown_reward_multiplier_epochs: 3000  # epochs to reach end value (clamped after)
+  showdown_reward_multiplier_epochs: 30000 # epochs to reach end value (clamped after)

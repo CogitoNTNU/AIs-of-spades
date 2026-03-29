@@ -693,7 +693,8 @@ class LearningLoop:
             return
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.current_model.parameters(), max_norm=1.0)
+        max_norm = float(self.config.get("grad_clip_norm", 1.0))
+        torch.nn.utils.clip_grad_norm_(self.current_model.parameters(), max_norm=max_norm)
         self.optimizer.step()
 
     def _get_grad_norm(self) -> float:
