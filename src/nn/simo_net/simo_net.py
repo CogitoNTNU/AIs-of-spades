@@ -32,6 +32,7 @@ permutation is consistent within a call (same B-dim shuffle applied).
 The opp_mask is permuted identically.
 """
 
+import numpy as np
 import torch
 import torch.nn as nn
 from typing import Any, Tuple
@@ -213,21 +214,21 @@ class SimoNet(PokerNet):
         device = next(self.parameters()).device
         p = preprocess_observation(observation)
 
-        def _to(t):
-            return t.to(device) if t is not None else None
-
         hand_state = self._hand_state
         game_state = self._game_state
         observation.add_network_internal_state({"hand": hand_state, "game": game_state})
 
+        def _t(arr: np.ndarray) -> torch.Tensor:
+            return torch.from_numpy(arr).to(device)
+
         action_logits, bet_mean, bet_std, cls = self._encode(
-            hole_cards=_to(p.hole_cards).unsqueeze(0),
-            board_cards=_to(p.board_cards).unsqueeze(0),
-            board_mask=_to(p.board_mask).unsqueeze(0),
-            bets=_to(p.bets).unsqueeze(0),
-            obs_scalars=_to(p.obs_scalars).unsqueeze(0),
-            opp_vecs=_to(p.opp_vecs).unsqueeze(0),
-            opp_mask=_to(p.opp_mask).unsqueeze(0),
+            hole_cards=_t(p.hole_cards).unsqueeze(0),
+            board_cards=_t(p.board_cards).unsqueeze(0),
+            board_mask=_t(p.board_mask).unsqueeze(0),
+            bets=_t(p.bets).unsqueeze(0),
+            obs_scalars=_t(p.obs_scalars).unsqueeze(0),
+            opp_vecs=_t(p.opp_vecs).unsqueeze(0),
+            opp_mask=_t(p.opp_mask).unsqueeze(0),
             hand_state=hand_state,
             game_state=game_state,
         )
@@ -243,8 +244,8 @@ class SimoNet(PokerNet):
         device = next(self.parameters()).device
         ps: list[PreprocessedObs] = [p for p, _ in trajectory]
 
-        def stack(fn):
-            return torch.stack([fn(p) for p in ps]).to(device)
+        def stack(fn) -> torch.Tensor:
+            return torch.from_numpy(np.stack([fn(p) for p in ps])).to(device)
 
         action_logits, bet_mean, bet_std, _ = self._encode(
             hole_cards=stack(lambda p: p.hole_cards),
@@ -255,10 +256,10 @@ class SimoNet(PokerNet):
             opp_vecs=stack(lambda p: p.opp_vecs),
             opp_mask=stack(lambda p: p.opp_mask),
             hand_state=stack(
-                lambda p: p.hand_state.reshape(self.hand_state_dim)
+                lambda p: p.hand_state.reshape(self.hand_state_dim)  # type: ignore[union-attr]
             ).detach(),
             game_state=stack(
-                lambda p: p.game_state.reshape(self.game_state_dim)
+                lambda p: p.game_state.reshape(self.game_state_dim)  # type: ignore[union-attr]
             ).detach(),
         )
 

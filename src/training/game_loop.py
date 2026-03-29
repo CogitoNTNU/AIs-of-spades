@@ -31,6 +31,13 @@ class Game:
         self._steal_bonus = float(config.get("steal_bonus", 0.0))
         self._stack_lo = int(config.get("stack_lo", 50))
         self._stack_hi = int(config.get("stack_hi", 200))
+        # Curriculum multiplier applied to main_reward at showdown.
+        # Amplifies card-strength signal early in training; decays toward 1.0
+        # as the agent matures and bluffing strategies become relevant.
+        # LearningLoop computes the per-epoch value and injects it into game_config.
+        self._showdown_reward_multiplier = float(
+            config.get("showdown_reward_multiplier", 1.0)
+        )
 
     # ------------------------------------------------------------------
     # Setup
@@ -163,15 +170,17 @@ class Game:
     # Main loop
     # ------------------------------------------------------------------
 
-    def play(self, total_hands: int) -> tuple[list, dict]:
+    def play(self, total_hands: int) -> tuple[list, dict, dict]:
         """
-        Run a full game session and return the collected trajectory and
-        aggregated bonus event counts.
+        Run a full game session and return the collected trajectory,
+        aggregated bonus event counts, and a log_data dict of metrics
+        that callers can forward to a logging backend (e.g. wandb).
 
         Returns
         -------
         trajectory   : list of (PreprocessedObs, Action, reward) steps
         bonus_events : dict with total fire counts for each bonus type
+        log_data     : dict of loggable scalar metrics from this game
         """
         self.reset()
         if self.table is None:
@@ -287,7 +296,10 @@ class Game:
                 for k, v in hand_events.items():
                     total_bonus_events[k] += v
 
-                rewards_trajectories.append(float(main_reward) + hand_bonus)
+                effective_reward = float(main_reward)
+                if reached_showdown and self._showdown_reward_multiplier != 1.0:
+                    effective_reward *= self._showdown_reward_multiplier
+                rewards_trajectories.append(effective_reward + hand_bonus)
                 hands_trajectories.append(hand_trajectory)
 
             if self.agents[0].stack <= 0:
@@ -301,7 +313,10 @@ class Game:
             for item in hand_trajectory:
                 self.trajectory.append((*item, reward))
 
-        return self.trajectory, total_bonus_events
+        log_data = {
+            "curriculum/showdown_reward_multiplier": self._showdown_reward_multiplier,
+        }
+        return self.trajectory, total_bonus_events, log_data
 
     # ------------------------------------------------------------------
     # Observation utility

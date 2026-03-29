@@ -29,3 +29,6 @@ game_loop:
   steal_bonus:        20.0   # reinforce uncontested aggression
   stack_lo:           50.0
   stack_hi:          200.0
+  showdown_reward_multiplier_start:  2.0   # multiplier at epoch 0
+  showdown_reward_multiplier_end:    1.0   # multiplier once decay is complete
+  showdown_reward_multiplier_epochs: 3000  # epochs to reach end value (clamped after)

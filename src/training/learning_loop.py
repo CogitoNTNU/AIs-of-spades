@@ -75,12 +75,11 @@ def _run_game(args):
             opponents.append(slot)
 
         with torch.no_grad():
-            # Game.play() returns (trajectory, bonus_events)
-            trajectory, bonus_events = Game(opponents, _worker_model, game_config).play(
-                hands_per_game
-            )
+            trajectory, bonus_events, log_data = Game(
+                opponents, _worker_model, game_config
+            ).play(hands_per_game)
 
-        return trajectory, bonus_events
+        return trajectory, bonus_events, log_data
 
     except Exception:
         raise RuntimeError(
@@ -254,8 +253,16 @@ class LearningLoop:
         t_epoch_start = time.time()
 
         state_dict = {k: v.cpu() for k, v in self.current_model.state_dict().items()}
+
+        mult_start = float(self.game_config.get("showdown_reward_multiplier_start", 1.0))
+        mult_end = float(self.game_config.get("showdown_reward_multiplier_end", 1.0))
+        decay_epochs = int(self.game_config.get("showdown_reward_multiplier_epochs", epochs))
+        t = min(epoch / max(decay_epochs - 1, 1), 1.0)
+        showdown_mult = mult_start + (mult_end - mult_start) * t
+        game_config_epoch = {**self.game_config, "showdown_reward_multiplier": showdown_mult}
+
         worker_args = self._build_worker_args(
-            state_dict, games_per_epoch, hands_per_game
+            state_dict, games_per_epoch, hands_per_game, game_config_epoch
         )
 
         # ── Simulation ────────────────────────────────────────────────
@@ -265,6 +272,14 @@ class LearningLoop:
 
         batch_trajectories = [r[0] for r in results]
         batch_bonus_events = [r[1] for r in results]
+        batch_log_data = [r[2] for r in results]
+
+        # Average numeric log_data values across games for a stable per-epoch metric.
+        game_log_data: dict = {}
+        if batch_log_data:
+            for key in batch_log_data[0]:
+                vals = [d[key] for d in batch_log_data if key in d]
+                game_log_data[key] = float(np.mean(vals)) if vals else 0.0
 
         bonus_totals = {
             "elimination": 0,
@@ -357,6 +372,7 @@ class LearningLoop:
             games_per_epoch=games_per_epoch,
             adv_stats=adv_stats,
             grad_norm=grad_norm,
+            game_log_data=game_log_data,
             t_total=t_total,
             t_simulation=t_simulation,
             t_loss=t_loss,
@@ -383,7 +399,7 @@ class LearningLoop:
     # Worker args builder
     # ------------------------------------------------------------------
 
-    def _build_worker_args(self, state_dict, games_per_epoch, hands_per_game):
+    def _build_worker_args(self, state_dict, games_per_epoch, hands_per_game, game_config=None):
         """
         Build one argument tuple per game.
 
@@ -392,6 +408,8 @@ class LearningLoop:
         opponents, preserving population diversity even though opponent slots
         inside workers are reused across games.
         """
+        if game_config is None:
+            game_config = self.game_config
         args = []
         none_count = 0
         for _ in range(games_per_epoch):
@@ -401,7 +419,7 @@ class LearningLoop:
             ]
             none_count += sum(1 for osd in opponent_state_dicts if osd is None)
             args.append(
-                (state_dict, hands_per_game, opponent_state_dicts, self.game_config)
+                (state_dict, hands_per_game, opponent_state_dicts, game_config)
             )
 
         if none_count > 0:
@@ -431,6 +449,7 @@ class LearningLoop:
         games_per_epoch,
         adv_stats,
         grad_norm,
+        game_log_data,
         t_total,
         t_simulation,
         t_loss,
@@ -485,6 +504,8 @@ class LearningLoop:
                 # Per-action advantage stats — collected in _compute_reinforce_loss
                 # and passed here to avoid multiple wandb.log() calls per epoch
                 **adv_stats,
+                # Curriculum schedule — metrics emitted by game_loop
+                **game_log_data,
                 # Bonus event rates (per game, comparable across runs)
                 **bonus_rates,
                 **action_stats,
