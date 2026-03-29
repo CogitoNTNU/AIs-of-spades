@@ -18,15 +18,15 @@ learning_loop:
   diversity_lo: 0.05
   diversity_hi: 0.90
   action_baseline_window: 50
-  continuous_weight: 0.001
+  continuous_weight: 0.01
 
 game_loop:
   decadiment_factor: 0.8
-  elimination_bonus:  60.0   # ~half average starting stack
+  elimination_bonus:  40.0   # half average starting stack
   survival_bonus:    200.0   # rare event, strong global signal
-  isolation_bonus:    10.0   # mild nudge toward heads-up play
+  isolation_bonus:     5.0   # mild nudge toward heads-up play
   showdown_bonus:      5.0   # mild nudge toward staying in hands
-  steal_bonus:        20.0   # reinforce uncontested aggression
+  steal_bonus:         5.0   # reinforce uncontested aggression
   stack_lo:           50.0
   stack_hi:          200.0
   showdown_reward_multiplier_start:  2.0   # multiplier at epoch 0
