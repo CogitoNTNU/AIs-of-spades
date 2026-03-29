@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class TransformerTrunk(nn.Module):
@@ -21,9 +22,9 @@ class TransformerTrunk(nn.Module):
 
     Parameters
     ----------
-    d_model   : dimension shared by all tokens
-    n_heads   : attention heads (must divide d_model)
-    n_layers  : number of TransformerEncoder layers
+    d_model    : dimension shared by all tokens
+    n_heads    : attention heads (must divide d_model)
+    n_layers   : number of TransformerEncoder layers
     n_opponents: maximum number of opponent slots (default 5)
     """
 
@@ -39,8 +40,19 @@ class TransformerTrunk(nn.Module):
         self.d_model = d_model
         self.n_opponents = n_opponents
 
-        # Learnable CLS token
-        self.cls_token = nn.Parameter(torch.zeros(d_model))
+        # CLS token — init normal so it starts distinguishable from zero
+        self.cls_token = nn.Parameter(torch.empty(d_model))
+        nn.init.normal_(self.cls_token, std=0.02)
+
+        # Per-stream LayerNorm applied before concatenation so all tokens
+        # enter the first attention layer on the same scale regardless of
+        # which encoder produced them.
+        self.norm_cards = nn.LayerNorm(d_model)
+        self.norm_bets = nn.LayerNorm(d_model)
+        self.norm_obs = nn.LayerNorm(d_model)
+        self.norm_hand_state = nn.LayerNorm(d_model)
+        self.norm_game_state = nn.LayerNorm(d_model)
+        self.norm_opponent = nn.LayerNorm(d_model)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -48,21 +60,9 @@ class TransformerTrunk(nn.Module):
             dim_feedforward=d_model * 4,
             dropout=0.0,
             batch_first=True,
+            norm_first=True,  # Pre-LN: more stable gradients than Post-LN
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
-
-        # One linear projection per non-opponent stream to map encoder
-        # outputs to d_model (in case encoder out_dims differ)
-        # In our design all encoders output d_model directly, so these
-        # are identity-equivalent — kept for flexibility.
-        self.proj_cards = nn.Linear(d_model, d_model)
-        self.proj_bets = nn.Linear(d_model, d_model)
-        self.proj_obs = nn.Linear(d_model, d_model)
-        self.proj_hand_state = nn.Linear(d_model, d_model)
-        self.proj_game_state = nn.Linear(d_model, d_model)
-        self.proj_opponent = nn.Linear(d_model, d_model)
-
-    # ------------------------------------------------------------------
 
     def forward(
         self,
@@ -81,32 +81,31 @@ class TransformerTrunk(nn.Module):
         """
         B = cards.size(0)
 
-        # Project fixed streams → [B, 1, d_model] each
+        # Normalise each stream independently before fusing.
+        # This decouples the scale of each encoder from the trunk,
+        # so ObsNN, BetsNN, CardsEncoder can have different activation
+        # magnitudes without one stream dominating attention.
         t_cls = self.cls_token.unsqueeze(0).unsqueeze(0).expand(B, 1, -1)
-        t_cards = self.proj_cards(cards).unsqueeze(1)
-        t_bets = self.proj_bets(bets).unsqueeze(1)
-        t_obs = self.proj_obs(obs).unsqueeze(1)
-        t_hand = self.proj_hand_state(hand_state).unsqueeze(1)
-        t_game = self.proj_game_state(game_state).unsqueeze(1)
-
-        # Project opponent tokens → [B, n_opponents, d_model]
-        t_opp = self.proj_opponent(opponents)
+        t_cards = self.norm_cards(cards).unsqueeze(1)
+        t_bets = self.norm_bets(bets).unsqueeze(1)
+        t_obs = self.norm_obs(obs).unsqueeze(1)
+        t_hand = self.norm_hand_state(hand_state).unsqueeze(1)
+        t_game = self.norm_game_state(game_state).unsqueeze(1)
+        t_opp = self.norm_opponent(opponents)  # [B, n_opp, d_model]
 
         # Stack all tokens → [B, 6 + n_opponents, d_model]
         tokens = torch.cat(
             [t_cls, t_cards, t_bets, t_obs, t_hand, t_game, t_opp], dim=1
         )
 
-        # Build key-padding mask (True = ignore)
-        # Fixed tokens are always attended; absent opponents are masked
+        # Build key-padding mask (True = ignore).
+        # Fixed tokens are always attended; absent opponent seats are masked.
         fixed_present = torch.zeros(B, 6, dtype=torch.bool, device=cards.device)
-        opp_absent = ~opp_mask  # [B, n_opponents]
+        opp_absent = ~opp_mask  # [B, n_opp]
         pad_mask = torch.cat([fixed_present, opp_absent], dim=1)  # [B, 6+N]
 
-        # Self-attention
         out = self.transformer(
             tokens, src_key_padding_mask=pad_mask
         )  # [B, 6+N, d_model]
 
-        # Return CLS (index 0)
-        return out[:, 0, :]  # [B, d_model]
+        return out[:, 0, :]  # CLS hidden state → [B, d_model]

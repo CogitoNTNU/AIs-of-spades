@@ -8,23 +8,32 @@ from pokerenv.common import PlayerState
 from training.player_agent import PlayerAgent
 
 MAIN_CHARACTER_NAME = "UGO"
+MIN_STACK_TO_PLAY = 1
 
 
 class Game:
 
-    def __init__(self, opponents: list, current_model, config):
-        self.opponents = opponents  # list of 5 pre-built models
+    def __init__(self, opponents: list, current_model, config: dict):
+        self.opponents = opponents
         self.current_model = current_model
         self.table = None
         self.agents = []
         self.config = config
 
-        # trajectory: list of (PreprocessedObs, Action)
-        # Only steps where the main character acted are stored.
-        # Preprocessing is done here in the worker to avoid redundant work
-        # on the main process.
         self.trajectory = []
         self.reward = 0.0
+
+        self._elimination_bonus = float(config.get("elimination_bonus", 0.0))
+        self._survival_bonus = float(config.get("survival_bonus", 0.0))
+        self._isolation_bonus = float(config.get("isolation_bonus", 0.0))
+        self._showdown_bonus = float(config.get("showdown_bonus", 0.0))
+        self._steal_bonus = float(config.get("steal_bonus", 0.0))
+        self._stack_lo = int(config.get("stack_lo", 50.0))
+        self._stack_hi = int(config.get("stack_hi", 50.0))
+
+    # ------------------------------------------------------------------
+    # Setup
+    # ------------------------------------------------------------------
 
     def reset(self):
         self.trajectory = []
@@ -32,7 +41,7 @@ class Game:
         self.reward = 0.0
 
         self.active_opponents = rn.randint(1, 5)
-        player_names = {i: "player_%d" % (i + 1) for i in range(6)}
+        player_names = {i: f"player_{i + 1}" for i in range(6)}
         player_names[0] = MAIN_CHARACTER_NAME
 
         self.agents = [PlayerAgent(0, MAIN_CHARACTER_NAME, 0, self.current_model)]
@@ -44,23 +53,123 @@ class Game:
         self.table = Table(
             self.active_opponents + 1,
             players=self.agents,
-            stack_low=50,
-            stack_high=200,
+            stack_low=self._stack_lo,
+            stack_high=self._stack_hi,
             hand_history_location="hands/",
             invalid_action_penalty=0,
         )
         self.table.seed(None)
         self.table.reset()
 
+    # ------------------------------------------------------------------
+    # Reward helpers
+    # ------------------------------------------------------------------
+
     def get_weighted_rewards(self, hand_rewards: list, gamma: float = 0.8) -> list:
+        """
+        Recursively apply temporal discounting across hands.
+        Each hand's reward incorporates a discounted sum of future hands,
+        so decisions early in the session receive credit for downstream outcomes.
+        """
         if len(hand_rewards) == 0:
             return []
         if len(hand_rewards) == 1:
             return hand_rewards
-        weighted_rewards = self.get_weighted_rewards(hand_rewards[1:], gamma)
-        return [hand_rewards[0] + gamma * weighted_rewards[0]] + weighted_rewards
+        weighted = self.get_weighted_rewards(hand_rewards[1:], gamma)
+        return [hand_rewards[0] + gamma * weighted[0]] + weighted
 
-    def play(self, total_hands: int):
+    def _stack_snapshot(self) -> dict:
+        """
+        Capture opponent stacks before a hand starts.
+        Used to detect eliminations by comparing against post-hand stacks.
+        """
+        return {i: self.agents[i].stack for i in range(1, len(self.agents))}
+
+    def _compute_hand_bonus(
+        self,
+        stacks_before: dict,
+        reached_showdown: bool,
+        was_isolated: bool,
+        was_steal: bool,
+    ) -> tuple[float, dict]:
+        """
+        Compute pure outcome bonuses at the end of a hand.
+        All bonuses are zero by default and must be enabled explicitly in config.
+        None of them encode card strength or domain knowledge about hand values —
+        they reward structural outcomes observable without knowing hole cards.
+
+        elimination_bonus : fired for each opponent who had chips before the hand
+                            and is now at zero. Rewards contributing to eliminations
+                            without specifying how to achieve them.
+
+        survival_bonus    : fired when the main character is the sole remaining
+                            player with chips. Rare but a strong global success signal.
+
+        isolation_bonus   : fired when the hand was played heads-up (1v1).
+                            Rewards positional isolation play regardless of cards.
+
+        showdown_bonus    : fired when the main character reached showdown.
+                            Rewards consistent decision-making that sustains
+                            involvement through the full hand, not card strength.
+
+        steal_bonus       : fired when all opponents folded before showdown, the
+                            main character was not all-in, and won the pot uncontested.
+                            Rewards aggressive pressure as a strategy, card-agnostic.
+
+        Returns
+        -------
+        bonus   : total scalar bonus for this hand
+        events  : dict of per-bonus fire counts for logging
+        """
+        bonus = 0.0
+        events = {
+            "elimination": 0,
+            "survival": 0,
+            "isolation": 0,
+            "showdown": 0,
+            "steal": 0,
+        }
+
+        if self._elimination_bonus > 0.0:
+            for i, stack_before in stacks_before.items():
+                if stack_before > 0 and self.agents[i].stack <= 0:
+                    bonus += self._elimination_bonus
+                    events["elimination"] += 1
+
+        if self._survival_bonus > 0.0:
+            players_with_chips = sum(1 for a in self.agents if a.stack > 0)
+            if players_with_chips == 1 and self.agents[0].stack > 0:
+                bonus += self._survival_bonus
+                events["survival"] += 1
+
+        if self._isolation_bonus > 0.0 and was_isolated:
+            bonus += self._isolation_bonus
+            events["isolation"] += 1
+
+        if self._showdown_bonus > 0.0 and reached_showdown:
+            bonus += self._showdown_bonus
+            events["showdown"] += 1
+
+        if self._steal_bonus > 0.0 and was_steal:
+            bonus += self._steal_bonus
+            events["steal"] += 1
+
+        return bonus, events
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+
+    def play(self, total_hands: int) -> tuple[list, dict]:
+        """
+        Run a full game session and return the collected trajectory and
+        aggregated bonus event counts.
+
+        Returns
+        -------
+        trajectory   : list of (PreprocessedObs, Action, reward) steps
+        bonus_events : dict with total fire counts for each bonus type
+        """
         self.reset()
         if self.table is None:
             raise Exception("Table should not be None")
@@ -68,15 +177,30 @@ class Game:
         rewards_trajectories = []
         hands_trajectories = []
 
-        for hand_index in range(total_hands):
+        total_bonus_events = {
+            "elimination": 0,
+            "survival": 0,
+            "isolation": 0,
+            "showdown": 0,
+            "steal": 0,
+        }
+
+        for _ in range(total_hands):
             hand_trajectory = []
-            # End the game early if fewer than 2 players have chips to play.
-            players_with_chips = sum(1 for a in self.agents if a.stack >= 1)
+
+            players_with_chips = sum(
+                1 for a in self.agents if a.stack >= MIN_STACK_TO_PLAY
+            )
             if players_with_chips < 2:
                 break
 
+            stacks_before = self._stack_snapshot()
+
+            # Only reset internal state for agents still in the game —
+            # calling new_hand() on eliminated agents wastes allocations.
             for agent in self.agents:
-                agent.new_hand()
+                if agent.stack >= MIN_STACK_TO_PLAY:
+                    agent.new_hand()
 
             obs_array = self.table.reset_hand()
             obs = Observation(
@@ -85,20 +209,24 @@ class Game:
             )
 
             rewards = np.zeros(len(self.agents))
+            reached_showdown = False
+            active_count = self.active_opponents + 1
 
             while True:
                 acting_player_i = int(obs.player_identifier)
 
                 if acting_player_i >= len(self.agents):
                     raise Exception(
-                        "player_identifier %d is out of range (agents: %d)"
-                        % (acting_player_i, len(self.agents))
+                        f"player_identifier {acting_player_i} out of range "
+                        f"(agents: {len(self.agents)})"
                     )
 
                 acting_agent = self.agents[acting_player_i]
 
                 if acting_agent.state != PlayerState.ACTIVE or acting_agent.all_in:
-                    print("Table asked inactive player %d — forcing _end_hand")
+                    print(
+                        f"Table asked inactive player {acting_player_i} — forcing _end_hand"
+                    )
                     self.table.hand_is_over = True
                     self.table._end_hand()
                     rewards = np.asarray(
@@ -112,14 +240,22 @@ class Game:
                 action = acting_agent.get_action(obs)
 
                 if acting_player_i == 0:
-                    # Preprocess here in the worker (CPU, parallel) so the main
-                    # process only needs to stack tensors and run the GPU forward.
                     preprocessed = self.current_model.preprocess(obs)
                     hand_trajectory.append((preprocessed, action))
 
                 obs_array, rewards, done = self.table.step(action)
 
                 if done:
+                    # Determine whether a showdown occurred by counting players
+                    # who were still in the hand (active or all-in) at resolution.
+                    # This is read before any further state mutation.
+                    players_in_hand = sum(
+                        1
+                        for a in self.agents
+                        if a.state == PlayerState.ACTIVE or a.all_in
+                    )
+                    reached_showdown = players_in_hand > 1
+                    active_count = players_in_hand
                     break
 
                 obs = Observation(
@@ -129,24 +265,51 @@ class Game:
 
             main_reward = rewards[0]
             if main_reward is not None:
-                rewards_trajectories.append(main_reward)
+                was_isolated = active_count == 2
+
+                # Steal requires UGO to not be all-in: an all-in win where
+                # opponents fold is a different outcome, not a positional steal.
+                was_steal = (
+                    not reached_showdown
+                    and not self.agents[0].all_in
+                    and float(main_reward) > 0
+                )
+
+                hand_bonus, hand_events = self._compute_hand_bonus(
+                    stacks_before,
+                    reached_showdown=reached_showdown,
+                    was_isolated=was_isolated,
+                    was_steal=was_steal,
+                )
+
+                for k, v in hand_events.items():
+                    total_bonus_events[k] += v
+
+                rewards_trajectories.append(float(main_reward) + hand_bonus)
                 hands_trajectories.append(hand_trajectory)
 
             if self.agents[0].stack <= 0:
                 break
 
+        gamma = self.config.get("decadiment_factor", 0.0)
         for hand_trajectory, reward in zip(
             hands_trajectories,
-            self.get_weighted_rewards(
-                rewards_trajectories, self.config.get("decadiment_factor", 0.0)
-            ),
+            self.get_weighted_rewards(rewards_trajectories, gamma),
         ):
             for item in hand_trajectory:
                 self.trajectory.append((*item, reward))
 
-        return self.trajectory
+        return self.trajectory, total_bonus_events
+
+    # ------------------------------------------------------------------
+    # Observation utility
+    # ------------------------------------------------------------------
 
     def _get_point_of_view(self, player, hand_log):
+        """
+        Remap player identifiers in the hand log so that the acting player
+        always sees itself as player 0. Preserves relative ordering.
+        """
         if player == 0:
             return hand_log
         hand_log = hand_log.copy()

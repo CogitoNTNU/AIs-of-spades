@@ -134,5 +134,5 @@ class Player(ABC):
         pass
 
     @abstractmethod
-    def new_hand(self, observation: Observation) -> Action:
+    def new_hand(self) -> Action:
         pass

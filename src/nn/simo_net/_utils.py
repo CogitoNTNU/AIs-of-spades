@@ -82,18 +82,21 @@ def preprocess_observation(observation: Observation) -> PreprocessedObs:
     bets = torch.from_numpy(observation.hand_log).float()
 
     # ── OBS SCALARS (self features, 10 values) ────────────────────────
+    STACK_NORM = 200.0  # stack_high dal config
+    POT_NORM = 400.0  # 2× stack_high, valore massimo ragionevole
+
     self_feats = torch.tensor(
         [
-            float(observation.street),
-            float(observation.pot),
-            float(observation.bet_to_match),
-            float(observation.minimum_raise),
-            float(observation.player_position),
-            float(observation.player_stack),
-            float(observation.player_money_in_pot),
-            float(observation.bet_this_street),
-            float(observation.bet_range.lower_bound),
-            float(observation.bet_range.upper_bound),
+            float(observation.street) / 3.0,  # 0-1
+            float(observation.pot) / POT_NORM,
+            float(observation.bet_to_match) / STACK_NORM,
+            float(observation.minimum_raise) / STACK_NORM,
+            float(observation.player_position) / 5.0,  # 0-1
+            float(observation.player_stack) / STACK_NORM,
+            float(observation.player_money_in_pot) / POT_NORM,
+            float(observation.bet_this_street) / STACK_NORM,
+            float(observation.bet_range.lower_bound) / STACK_NORM,
+            float(observation.bet_range.upper_bound) / STACK_NORM,
         ],
         dtype=torch.float32,
     )

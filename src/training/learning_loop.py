@@ -1,6 +1,7 @@
 import os
 import time
 import traceback
+from collections import deque
 
 import numpy as np
 import torch
@@ -74,11 +75,12 @@ def _run_game(args):
             opponents.append(slot)
 
         with torch.no_grad():
-            trajectory = Game(opponents, _worker_model, game_config).play(
+            # Game.play() returns (trajectory, bonus_events)
+            trajectory, bonus_events = Game(opponents, _worker_model, game_config).play(
                 hands_per_game
             )
 
-        return trajectory
+        return trajectory, bonus_events
 
     except Exception:
         raise RuntimeError(
@@ -129,13 +131,14 @@ class LearningLoop:
 
         self.device: torch.device | None = None
 
-        # Per-action baselines: fold=0, bet=1, call=2
-        # Exponential moving average of reward per action type.
+        # Per-action baselines: fold=0, bet=1, call=2.
+        # Rolling mean over the last N epochs per action — much faster to
+        # adapt than EMA with alpha=0.01 (which needs ~460 epochs to converge).
+        baseline_window = self.config.get("action_baseline_window", 50)
+        self._action_reward_history: list[deque] = [
+            deque(maxlen=baseline_window) for _ in range(3)
+        ]
         self._action_baselines = np.zeros(3, dtype=np.float64)
-        self._action_baselines_initialized = False
-        self._action_baseline_alpha = float(
-            self.config.get("action_baseline_alpha", 0.01)
-        )
 
     # ------------------------------------------------------------------
     # Checkpoint management
@@ -224,10 +227,7 @@ class LearningLoop:
             initializer=_worker_init,
             initargs=(model_class,),
         ) as pool:
-            print(
-                f"[main] pool ready — {self.num_workers} workers",
-                flush=True,
-            )
+            print(f"[main] pool ready — {self.num_workers} workers", flush=True)
             try:
                 for epoch in range(start_epoch, epochs):
                     self._run_epoch(
@@ -260,20 +260,38 @@ class LearningLoop:
 
         # ── Simulation ────────────────────────────────────────────────
         t0 = time.time()
-        batch_trajectories = pool.map(_run_game, worker_args)
+        results = pool.map(_run_game, worker_args)
         t_simulation = time.time() - t0
+
+        batch_trajectories = [r[0] for r in results]
+        batch_bonus_events = [r[1] for r in results]
+
+        bonus_totals = {
+            "elimination": 0,
+            "survival": 0,
+            "isolation": 0,
+            "showdown": 0,
+            "steal": 0,
+        }
+        for game_events in batch_bonus_events:
+            for k, v in game_events.items():
+                bonus_totals[k] += v
 
         batch_rewards = [
             np.mean([step[2] for step in t]) for t in batch_trajectories if t
         ]
-
         total_steps = sum(len(t) for t in batch_trajectories)
 
         # ── Loss ──────────────────────────────────────────────────────
         t0 = time.time()
-        loss, mean_probs, diversity_penalty, loss_discrete, loss_continuous = (
-            self._compute_reinforce_loss(batch_trajectories)
-        )
+        (
+            loss,
+            mean_probs,
+            diversity_penalty,
+            loss_discrete,
+            loss_continuous,
+            adv_stats,
+        ) = self._compute_reinforce_loss(batch_trajectories)
         t_loss = time.time() - t0
 
         # ── Gradient step ─────────────────────────────────────────────
@@ -287,9 +305,11 @@ class LearningLoop:
         action_stats = self._compute_action_stats(batch_trajectories)
         t_stats = time.time() - t0
 
+        # Compute grad norm once — reused in both print and log
+        grad_norm = self._get_grad_norm()
+
         t_total = time.time() - t_epoch_start
         avg_reward = np.mean(batch_rewards)
-        grad_norm = self._get_grad_norm()
 
         probs_str = "  ".join(
             f"{name}={p:.2%}"
@@ -333,6 +353,10 @@ class LearningLoop:
             batch_trajectories=batch_trajectories,
             total_steps=total_steps,
             action_stats=action_stats,
+            bonus_totals=bonus_totals,
+            games_per_epoch=games_per_epoch,
+            adv_stats=adv_stats,
+            grad_norm=grad_norm,
             t_total=t_total,
             t_simulation=t_simulation,
             t_loss=t_loss,
@@ -403,6 +427,10 @@ class LearningLoop:
         batch_trajectories,
         total_steps,
         action_stats,
+        bonus_totals,
+        games_per_epoch,
+        adv_stats,
+        grad_norm,
         t_total,
         t_simulation,
         t_loss,
@@ -414,6 +442,13 @@ class LearningLoop:
         diversity_coef_effective = (
             float(self.config.get("diversity_coef", 0.1)) * reward_scale
         )
+
+        # Normalise bonus counts per game so the metric is comparable across
+        # runs with different games_per_epoch settings.
+        n_games = max(games_per_epoch, 1)
+        bonus_rates = {
+            f"bonus/{k}_per_game": v / n_games for k, v in bonus_totals.items()
+        }
 
         wandb.log(
             data={
@@ -440,13 +475,18 @@ class LearningLoop:
                     [len(t) for t in batch_trajectories]
                 ),
                 "train/total_steps": total_steps,
-                "train/grad_norm": self._get_grad_norm(),
+                "train/grad_norm": grad_norm,
                 "train/learning_rate": self.optimizer.param_groups[0]["lr"],
                 "train/diversity_coef_effective": diversity_coef_effective,
                 # Per-action baselines
                 "baseline/fold": self._action_baselines[0],
                 "baseline/bet": self._action_baselines[1],
                 "baseline/call": self._action_baselines[2],
+                # Per-action advantage stats — collected in _compute_reinforce_loss
+                # and passed here to avoid multiple wandb.log() calls per epoch
+                **adv_stats,
+                # Bonus event rates (per game, comparable across runs)
+                **bonus_rates,
                 **action_stats,
             }
         )
@@ -454,27 +494,34 @@ class LearningLoop:
     # ------------------------------------------------------------------
     # REINFORCE
     # ------------------------------------------------------------------
+
     def _compute_reinforce_loss(
         self, batch_trajectories: list
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, float]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, float, dict]:
         """
         Compute the REINFORCE loss over a batch of episodes.
 
         Per-action baselines
         --------------------
-        Baselines are tracked on RAW rewards (chip values) to maintain a
-        stationary target across epochs.  The per-action advantage is then
-        normalised globally for stable gradient magnitudes.  This avoids the
-        feedback loop that arises when baselines chase normalised rewards whose
-        scale shifts every epoch.
+        Baselines use a rolling mean over the last N epochs of raw rewards
+        per action type.  This adapts much faster than EMA with small alpha
+        and remains interpretable: the baseline for each action is simply
+        the average reward that action has produced recently.
+
+        Continuous loss masking
+        -----------------------
+        The bet distribution loss is computed only for BET steps.  Computing
+        it on FOLD/CALL steps produces spurious gradients on bet_mean and
+        bet_std because bet_tensor is a placeholder for those actions.
 
         Returns
         -------
-        loss                  : scalar tensor (reinforce + diversity penalty)
-        mean_probs            : [3] mean action probabilities across all steps
-        diversity_penalty     : scalar tensor
+        loss                    : scalar tensor (reinforce + diversity penalty)
+        mean_probs              : [3] mean action probabilities across all steps
+        diversity_penalty       : scalar tensor
         reinforce_discrete_mean : float  (for logging)
         reinforce_continuous_mean : float  (for logging)
+        adv_stats               : dict of per-action advantage mean/std for wandb
         """
         device = self.device
 
@@ -485,14 +532,12 @@ class LearningLoop:
 
         if episode_rewards.std() < 1e-8:
             zero = torch.tensor(0.0, requires_grad=False, device=device)
-            return zero, torch.zeros(3, device=device), zero, 0.0, 0.0
+            return zero, torch.zeros(3, device=device), zero, 0.0, 0.0, {}
 
         # ── Single pass: collect flat data ───────────────────────────────
-        # Pre-count total steps to pre-allocate numpy arrays and avoid
-        # repeated list.append() + torch.stack() overhead.
         total_steps = sum(len(t) for t in batch_trajectories)
 
-        flat_preprocessed = [None] * total_steps  # kept as list — opaque objects
+        flat_preprocessed = [None] * total_steps
         flat_actions = [None] * total_steps
         raw_rewards = np.empty(total_steps, dtype=np.float64)
         action_indices = np.empty(total_steps, dtype=np.int64)
@@ -514,32 +559,32 @@ class LearningLoop:
                 torch.tensor(0.0, device=device),
                 0.0,
                 0.0,
+                {},
             )
 
-        alpha = self._action_baseline_alpha
+        # ── Update rolling baselines ──────────────────────────────────────
+        # Extend each action's reward history with this epoch's observations,
+        # then recompute the baseline as the mean of the rolling window.
         for action_idx in range(3):
             mask = action_indices == action_idx
             if mask.any():
-                epoch_mean = raw_rewards[mask].mean()
-                if self._action_baselines_initialized:
-                    self._action_baselines[action_idx] = (
-                        1 - alpha
-                    ) * self._action_baselines[action_idx] + alpha * epoch_mean
-                else:
-                    self._action_baselines[action_idx] = epoch_mean
+                self._action_reward_history[action_idx].extend(
+                    raw_rewards[mask].tolist()
+                )
 
-        self._action_baselines_initialized = True
+        self._action_baselines = np.array(
+            [np.mean(h) if h else 0.0 for h in self._action_reward_history]
+        )
 
-        # ── Compute per-action advantages on raw rewards ─────────────────
-        # advantages[i] = raw_reward[i] - baseline[action_indices[i]]
+        # ── Per-action advantages on raw rewards ─────────────────────────
         raw_advantages = raw_rewards - self._action_baselines[action_indices]
 
-        # ── Normalise advantages globally ────────────────────────────────
-        # Normalisation is applied to advantages (not raw rewards) so gradient
-        # magnitudes stay stable while baseline semantics remain interpretable.
-        adv_std = raw_advantages.std() + 1e-8
-        adv_mean = raw_advantages.mean()
-        advantages = (raw_advantages - adv_mean) / adv_std
+        # ── Global normalisation ──────────────────────────────────────────
+        # Applied to advantages (not raw rewards) so gradient magnitudes stay
+        # stable while baseline semantics remain interpretable.
+        advantages = (raw_advantages - raw_advantages.mean()) / (
+            raw_advantages.std() + 1e-8
+        )
 
         # ── Forward pass ─────────────────────────────────────────────────
         flat_trajectory = list(zip(flat_preprocessed, flat_actions))
@@ -547,30 +592,48 @@ class LearningLoop:
             flat_trajectory
         )
 
-        # Stack tensors in one shot — avoids N small allocations
         action_batch = torch.stack([a.action_tensor for a in flat_actions]).to(device)
         bet_batch = torch.stack([a.bet_tensor for a in flat_actions]).to(device)
         adv_batch = torch.tensor(advantages, dtype=torch.float32, device=device)
 
+        # ── Discrete loss ─────────────────────────────────────────────────
         log_p_discrete = D.Categorical(logits=action_logits).log_prob(action_batch)
-        log_p_continuous = D.Normal(bet_mean, bet_std).log_prob(bet_batch).squeeze(-1)
-
-        # Separate losses for monitoring
         reinforce_discrete = -adv_batch * log_p_discrete
-        reinforce_continuous = -adv_batch * log_p_continuous
-        reinforce_loss = (reinforce_discrete + reinforce_continuous).mean()
+
+        # ── Continuous loss — BET steps only ─────────────────────────────
+        # Masking prevents spurious gradients on bet_mean/bet_std from the
+        # placeholder bet_tensor values stored for FOLD and CALL actions.
+        is_bet = (action_batch == 1).float()
+        n_bets = is_bet.sum().clamp(min=1.0)
+        log_p_continuous = D.Normal(bet_mean, bet_std).log_prob(bet_batch).squeeze(-1)
+        reinforce_continuous = -adv_batch * log_p_continuous * is_bet
+
+        reinforce_loss = reinforce_discrete.mean() + reinforce_continuous.sum() / n_bets
 
         action_probs = D.Categorical(logits=action_logits).probs
         diversity_penalty, mean_probs = self._compute_diversity_penalty(
             action_probs, episode_rewards
         )
 
+        # ── Per-action advantage stats for logging ────────────────────────
+        # Accumulated here and returned as a dict so _log_epoch can emit
+        # them in a single wandb.log() call — multiple calls per epoch
+        # create phantom steps in wandb charts.
+        adv_stats = {}
+        for action_idx, name in enumerate(["fold", "bet", "call"]):
+            mask = action_indices == action_idx
+            if mask.any():
+                adv_for_action = advantages[mask]
+                adv_stats[f"advantage/mean_{name}"] = float(adv_for_action.mean())
+                adv_stats[f"advantage/std_{name}"] = float(adv_for_action.std())
+
         return (
             reinforce_loss + diversity_penalty,
             mean_probs,
             diversity_penalty,
             reinforce_discrete.mean().item(),
-            reinforce_continuous.mean().item(),
+            (reinforce_continuous.sum() / n_bets).item(),
+            adv_stats,
         )
 
     def _compute_diversity_penalty(
@@ -585,7 +648,7 @@ class LearningLoop:
         Parameters
         ----------
         action_probs : [N, 3]  probabilities already computed by forward_batch
-        batch_rewards: list of per-episode scalar rewards
+        all_rewards  : flat array of per-step rewards for scale estimation
 
         Returns
         -------
