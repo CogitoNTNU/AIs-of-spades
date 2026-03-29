@@ -314,7 +314,7 @@ class Game:
                 self.trajectory.append((*item, reward))
 
         log_data = {
-            "curriculum/showdown_reward_multiplier": self._showdown_reward_multiplier,
+            "game/showdown_multiplier": self._showdown_reward_multiplier,
         }
         return self.trajectory, total_bonus_events, log_data
 

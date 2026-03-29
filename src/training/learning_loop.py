@@ -458,57 +458,53 @@ class LearningLoop:
         t_overhead,
     ):
         reward_scale = float(np.mean(np.abs(batch_rewards)) + 1e-8)
-        diversity_coef_effective = (
-            float(self.config.get("diversity_coef", 0.1)) * reward_scale
-        )
+        continuous_weight = float(self.config.get("continuous_weight", 0.01))
+        diversity_coef_effective = float(self.config.get("diversity_coef", 0.1)) * reward_scale
 
-        # Normalise bonus counts per game so the metric is comparable across
-        # runs with different games_per_epoch settings.
         n_games = max(games_per_epoch, 1)
         bonus_rates = {
-            f"bonus/{k}_per_game": v / n_games for k, v in bonus_totals.items()
+            f"bonus/{k}": v / n_games for k, v in bonus_totals.items()
         }
 
         wandb.log(
             data={
                 "epoch": epoch,
-                # Timing
+                # ── Timing ────────────────────────────────────────────────
                 "time/total": t_total,
                 "time/simulation": t_simulation,
                 "time/loss_forward": t_loss,
                 "time/grad_step": t_grad,
-                "time/stats_logging": t_stats,
+                "time/stats": t_stats,
                 "time/overhead": t_overhead,
                 "time/steps_per_sec": total_steps / t_total if t_total > 0 else 0.0,
                 "time/frac_simulation": t_simulation / t_total if t_total > 0 else 0.0,
                 "time/frac_gpu": (t_loss + t_grad) / t_total if t_total > 0 else 0.0,
-                # Training signal
-                "train/loss": loss.item() if loss.requires_grad else 0.0,
-                "train/loss_discrete": loss_discrete,
-                "train/loss_continuous": loss_continuous,
+                # ── Loss ──────────────────────────────────────────────────
+                "loss/total": loss.item() if loss.requires_grad else 0.0,
+                "loss/discrete": loss_discrete,
+                "loss/continuous": loss_continuous,
+                "loss/continuous_weight": continuous_weight,
+                "loss/diversity_coef_effective": diversity_coef_effective,
+                # ── Training signal ───────────────────────────────────────
                 "train/avg_reward": avg_reward,
                 "train/reward_std": np.std(batch_rewards),
                 "train/reward_max": np.max(batch_rewards),
                 "train/reward_min": np.min(batch_rewards),
-                "train/avg_trajectory_len": np.mean(
-                    [len(t) for t in batch_trajectories]
-                ),
                 "train/total_steps": total_steps,
                 "train/grad_norm": grad_norm,
                 "train/learning_rate": self.optimizer.param_groups[0]["lr"],
-                "train/diversity_coef_effective": diversity_coef_effective,
-                # Per-action baselines
+                # ── Per-action baselines ───────────────────────────────────
                 "baseline/fold": self._action_baselines[0],
                 "baseline/bet": self._action_baselines[1],
                 "baseline/call": self._action_baselines[2],
-                # Per-action advantage stats — collected in _compute_reinforce_loss
-                # and passed here to avoid multiple wandb.log() calls per epoch
+                # ── Per-action advantages ──────────────────────────────────
                 **adv_stats,
-                # Curriculum schedule — metrics emitted by game_loop
-                **game_log_data,
-                # Bonus event rates (per game, comparable across runs)
-                **bonus_rates,
+                # ── Action frequencies & game stats ───────────────────────
                 **action_stats,
+                # ── Game-level metrics from simulation ────────────────────
+                **game_log_data,
+                # ── Bonus event rates (per game) ──────────────────────────
+                **bonus_rates,
             }
         )
 
@@ -641,11 +637,6 @@ class LearningLoop:
 
         # ── Per-action advantage stats for logging ────────────────────────
         adv_stats = {}
-        adv_stats["loss/continuous_weight"] = continuous_weight
-        adv_stats["loss/disc_magnitude"] = disc_loss.abs().item()
-        adv_stats["loss/cont_magnitude"] = cont_loss.abs().item()
-        adv_stats["loss/cont_weighted"] = (continuous_weight * cont_loss).abs().item()
-
         for action_idx, name in enumerate(["fold", "bet", "call"]):
             mask = action_indices == action_idx
             if mask.any():
@@ -736,7 +727,7 @@ class LearningLoop:
             "action/bet": counts[PlayerAction.BET] / total,
             "action/call": counts[PlayerAction.CALL] / total,
             "action/bet_amount": np.mean(bet_amounts) if bet_amounts else 0.0,
-            "game/avg_hands_per_trajectory": np.mean(traj_lengths),
-            "game/min_hands_per_trajectory": np.min(traj_lengths),
-            "game/max_hands_per_trajectory": np.max(traj_lengths),
+            "game/avg_hands": np.mean(traj_lengths),
+            "game/min_hands": np.min(traj_lengths),
+            "game/max_hands": np.max(traj_lengths),
         }
