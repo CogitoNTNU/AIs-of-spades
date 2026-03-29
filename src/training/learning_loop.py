@@ -568,9 +568,8 @@ class LearningLoop:
         for action_idx in range(3):
             mask = action_indices == action_idx
             if mask.any():
-                self._action_reward_history[action_idx].extend(
-                    raw_rewards[mask].tolist()
-                )
+                epoch_mean = float(raw_rewards[mask].mean())
+                self._action_reward_history[action_idx].append(epoch_mean)
 
         self._action_baselines = np.array(
             [np.mean(h) if h else 0.0 for h in self._action_reward_history]
