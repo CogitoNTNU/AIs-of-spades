@@ -381,7 +381,7 @@ class UITableManager:
 
                 acting_agent = agents[acting_seat]
 
-                if acting_agent.state is not PlayerState.ACTIVE or acting_agent.all_in:
+                if acting_agent.state is not PlayerState.ACTIVE:
                     log.warning(
                         "Table asked inactive player %d — forcing _end_hand",
                         acting_seat,

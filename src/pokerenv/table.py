@@ -182,7 +182,7 @@ class Table(gym.Env):
         self.current_turn += 1
 
         if (
-            player.all_in or player.state is not PlayerState.ACTIVE
+            player.state is not PlayerState.ACTIVE
         ) and not self.hand_is_over:
             raise Exception("A player who is inactive or all-in was allowed to act")
 
@@ -215,7 +215,7 @@ class Table(gym.Env):
 
     def _post_blinds(self):
         active_players = sorted(
-            [p for p in self.players if p.state is PlayerState.ACTIVE],
+            [p for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)],
             key=lambda p: p.position,
         )
 
@@ -253,10 +253,11 @@ class Table(gym.Env):
         action_list = valid_actions["actions_list"]
         bet_range = valid_actions["bet_range"]
 
-        # Se l'azione richiesta non è disponibile o la bet è fuori range → FOLD
+        # Se l'azione richiesta non è disponibile → FOLD, eccetto BET → CALL
         if action.action_type not in action_list:
+            fallback = PlayerAction.CALL if action.action_type is PlayerAction.BET else PlayerAction.FOLD
             action = Action(
-                action_type=PlayerAction.FOLD,
+                action_type=fallback,
                 action_tensor=action.action_tensor,
                 observation=action.observation,
                 bet_amount=0.0,
@@ -278,7 +279,7 @@ class Table(gym.Env):
             )
             if out_of_range or approx_gt(action.bet_amount, player.stack):
                 action = Action(
-                    action_type=PlayerAction.FOLD,
+                    action_type=PlayerAction.CALL,
                     action_tensor=action.action_tensor,
                     observation=action.observation,
                     bet_amount=0.0,
@@ -364,7 +365,7 @@ class Table(gym.Env):
     def _check_street_or_hand_over(self):
         # Players who can still voluntarily act
         players_with_actions = [
-            p for p in self.players if p.state is PlayerState.ACTIVE and not p.all_in
+            p for p in self.players if p.state is PlayerState.ACTIVE
         ]
         # Players who still owe action: haven't acted yet OR are behind on the bet
         players_who_should_act = [
@@ -384,7 +385,7 @@ class Table(gym.Env):
 
     def _return_uncalled_and_finish(self, hand_over: bool):
         """Return any uncalled portion then end the hand or transition to next street."""
-        all_active = [p for p in self.players if p.state is PlayerState.ACTIVE]
+        all_active = [p for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)]
         if self.betting.last_bet_placed_by is not None:
             biggest_other = max(
                 (
@@ -408,7 +409,7 @@ class Table(gym.Env):
             players_can_act = [
                 p
                 for p in self.players
-                if p.state is PlayerState.ACTIVE and not p.all_in
+                if p.state is PlayerState.ACTIVE
             ]
             self._do_street_transition(transition_to_end=(len(players_can_act) == 0))
 
@@ -420,7 +421,6 @@ class Table(gym.Env):
             i
             for i in range(self.n_players)
             if self.players[i].state is PlayerState.ACTIVE
-            and not self.players[i].all_in
             and i != self.current_player_i
         ]
 
@@ -438,7 +438,7 @@ class Table(gym.Env):
 
     def _do_street_transition(self, transition_to_end=False):
         active_can_act = [
-            p for p in self.players if p.state is PlayerState.ACTIVE and not p.all_in
+            p for p in self.players if p.state is PlayerState.ACTIVE
         ]
         if len(active_can_act) == 0:
             transition_to_end = True
@@ -486,7 +486,7 @@ class Table(gym.Env):
         self.hh.flush_to_disk()
 
     def _get_next_active_by_position(self, target_pos):
-        candidates = [p for p in self.players if p.state is PlayerState.ACTIVE]
+        candidates = [p for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)]
         return min(candidates, key=lambda p: (p.position - target_pos) % self.n_players)
 
     def _get_observation(self, player):
@@ -534,7 +534,7 @@ class Table(gym.Env):
         pot_norm = self.pot_mgr.pot / (
             self.stack_high * self.n_players
         )  # scala ragionevole
-        active = sum(1 for p in self.players if p.state is PlayerState.ACTIVE)
+        active = sum(1 for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN))
         btm_norm = self.betting.bet_to_match / self.stack_high
 
         hand_log_line[:8] = [

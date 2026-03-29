@@ -1,6 +1,7 @@
 import os
 import time
 import traceback
+from collections import deque
 
 import numpy as np
 import torch
@@ -74,11 +75,11 @@ def _run_game(args):
             opponents.append(slot)
 
         with torch.no_grad():
-            trajectory = Game(opponents, _worker_model, game_config).play(
-                hands_per_game
-            )
+            trajectory, bonus_events, log_data = Game(
+                opponents, _worker_model, game_config
+            ).play(hands_per_game)
 
-        return trajectory
+        return trajectory, bonus_events, log_data
 
     except Exception:
         raise RuntimeError(
@@ -106,6 +107,7 @@ def _build_model(model_class, state_dict=None):
 
 
 class LearningLoop:
+
     def __init__(self, weight_manager: WeightManager, config: dict):
         self.weight_manager = weight_manager
         self.config = config["learning_loop"]
@@ -128,6 +130,15 @@ class LearningLoop:
 
         self.device: torch.device | None = None
 
+        # Per-action baselines: fold=0, bet=1, call=2.
+        # Rolling mean over the last N epochs per action — much faster to
+        # adapt than EMA with alpha=0.01 (which needs ~460 epochs to converge).
+        baseline_window = self.config.get("action_baseline_window", 50)
+        self._action_reward_history: list[deque] = [
+            deque(maxlen=baseline_window) for _ in range(3)
+        ]
+        self._action_baselines = np.zeros(3, dtype=np.float64)
+
     # ------------------------------------------------------------------
     # Checkpoint management
     # ------------------------------------------------------------------
@@ -145,6 +156,8 @@ class LearningLoop:
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         if "scheduler_state_dict" in checkpoint:
             self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        if "action_baselines" in checkpoint:
+            self._action_baselines = np.array(checkpoint["action_baselines"])
         start_epoch = checkpoint["epoch"] + 1
         print(f"[main] resuming from epoch {start_epoch}", flush=True)
         return start_epoch
@@ -213,10 +226,7 @@ class LearningLoop:
             initializer=_worker_init,
             initargs=(model_class,),
         ) as pool:
-            print(
-                f"[main] pool ready — {self.num_workers} workers",
-                flush=True,
-            )
+            print(f"[main] pool ready — {self.num_workers} workers", flush=True)
             try:
                 for epoch in range(start_epoch, epochs):
                     self._run_epoch(
@@ -242,28 +252,61 @@ class LearningLoop:
     ):
         t_epoch_start = time.time()
 
-        # Serialize weights once; each worker deserializes its own copy.
         state_dict = {k: v.cpu() for k, v in self.current_model.state_dict().items()}
+
+        mult_start = float(self.game_config.get("showdown_reward_multiplier_start", 1.0))
+        mult_end = float(self.game_config.get("showdown_reward_multiplier_end", 1.0))
+        decay_epochs = int(self.game_config.get("showdown_reward_multiplier_epochs", epochs))
+        t = min(epoch / max(decay_epochs - 1, 1), 1.0)
+        showdown_mult = mult_start + (mult_end - mult_start) * t
+        game_config_epoch = {**self.game_config, "showdown_reward_multiplier": showdown_mult}
+
         worker_args = self._build_worker_args(
-            state_dict, games_per_epoch, hands_per_game
+            state_dict, games_per_epoch, hands_per_game, game_config_epoch
         )
 
         # ── Simulation ────────────────────────────────────────────────
         t0 = time.time()
-        batch_trajectories = pool.map(_run_game, worker_args)
+        results = pool.map(_run_game, worker_args)
         t_simulation = time.time() - t0
+
+        batch_trajectories = [r[0] for r in results]
+        batch_bonus_events = [r[1] for r in results]
+        batch_log_data = [r[2] for r in results]
+
+        # Average numeric log_data values across games for a stable per-epoch metric.
+        game_log_data: dict = {}
+        if batch_log_data:
+            for key in batch_log_data[0]:
+                vals = [d[key] for d in batch_log_data if key in d]
+                game_log_data[key] = float(np.mean(vals)) if vals else 0.0
+
+        bonus_totals = {
+            "elimination": 0,
+            "survival": 0,
+            "isolation": 0,
+            "showdown": 0,
+            "steal": 0,
+        }
+        for game_events in batch_bonus_events:
+            for k, v in game_events.items():
+                bonus_totals[k] += v
 
         batch_rewards = [
             np.mean([step[2] for step in t]) for t in batch_trajectories if t
         ]
-
         total_steps = sum(len(t) for t in batch_trajectories)
 
         # ── Loss ──────────────────────────────────────────────────────
         t0 = time.time()
-        loss, mean_probs, diversity_penalty = self._compute_reinforce_loss(
-            batch_trajectories
-        )
+        (
+            loss,
+            mean_probs,
+            diversity_penalty,
+            loss_discrete,
+            loss_continuous,
+            adv_stats,
+        ) = self._compute_reinforce_loss(batch_trajectories)
         t_loss = time.time() - t0
 
         # ── Gradient step ─────────────────────────────────────────────
@@ -277,14 +320,19 @@ class LearningLoop:
         action_stats = self._compute_action_stats(batch_trajectories)
         t_stats = time.time() - t0
 
-        t_total = time.time() - t_epoch_start
-        avg_reward = np.mean(batch_rewards)
+        # Compute grad norm once — reused in both print and log
         grad_norm = self._get_grad_norm()
 
-        # ── One summary line per epoch ─────────────────────────────────
+        t_total = time.time() - t_epoch_start
+        avg_reward = np.mean(batch_rewards)
+
         probs_str = "  ".join(
             f"{name}={p:.2%}"
             for name, p in zip(["fold", "bet", "call"], mean_probs.tolist())
+        )
+        baselines_str = "  ".join(
+            f"{name}_bl={b:.3f}"
+            for name, b in zip(["fold", "bet", "call"], self._action_baselines)
         )
         print(
             f"[{epoch + 1:>5}/{epochs}] "
@@ -293,6 +341,12 @@ class LearningLoop:
             f"steps={total_steps:>5}  {probs_str}  "
             f"grad={grad_norm:.3f}  "
             f"sim={t_simulation:.1f}s  fwd={t_loss:.1f}s  bwd={t_grad:.1f}s",
+            flush=True,
+        )
+        print(
+            f"[{epoch + 1:>5}/{epochs}] "
+            f"loss_disc={loss_discrete:+.4f}  loss_cont={loss_continuous:+.4f}  "
+            f"{baselines_str}",
             flush=True,
         )
 
@@ -307,11 +361,18 @@ class LearningLoop:
         self._log_epoch(
             epoch=epoch,
             loss=loss,
+            loss_discrete=loss_discrete,
+            loss_continuous=loss_continuous,
             avg_reward=avg_reward,
             batch_rewards=batch_rewards,
             batch_trajectories=batch_trajectories,
             total_steps=total_steps,
             action_stats=action_stats,
+            bonus_totals=bonus_totals,
+            games_per_epoch=games_per_epoch,
+            adv_stats=adv_stats,
+            grad_norm=grad_norm,
+            game_log_data=game_log_data,
             t_total=t_total,
             t_simulation=t_simulation,
             t_loss=t_loss,
@@ -326,7 +387,11 @@ class LearningLoop:
         )
         if should_save:
             self.weight_manager.save(
-                self.current_model, self.optimizer, epoch, self.scheduler
+                self.current_model,
+                self.optimizer,
+                epoch,
+                self.scheduler,
+                self._action_baselines,
             )
             print(f"[{epoch + 1:>5}/{epochs}] checkpoint saved", flush=True)
 
@@ -334,7 +399,7 @@ class LearningLoop:
     # Worker args builder
     # ------------------------------------------------------------------
 
-    def _build_worker_args(self, state_dict, games_per_epoch, hands_per_game):
+    def _build_worker_args(self, state_dict, games_per_epoch, hands_per_game, game_config=None):
         """
         Build one argument tuple per game.
 
@@ -343,6 +408,8 @@ class LearningLoop:
         opponents, preserving population diversity even though opponent slots
         inside workers are reused across games.
         """
+        if game_config is None:
+            game_config = self.game_config
         args = []
         none_count = 0
         for _ in range(games_per_epoch):
@@ -352,7 +419,7 @@ class LearningLoop:
             ]
             none_count += sum(1 for osd in opponent_state_dicts if osd is None)
             args.append(
-                (state_dict, hands_per_game, opponent_state_dicts, self.game_config)
+                (state_dict, hands_per_game, opponent_state_dicts, game_config)
             )
 
         if none_count > 0:
@@ -371,11 +438,18 @@ class LearningLoop:
         self,
         epoch,
         loss,
+        loss_discrete,
+        loss_continuous,
         avg_reward,
         batch_rewards,
         batch_trajectories,
         total_steps,
         action_stats,
+        bonus_totals,
+        games_per_epoch,
+        adv_stats,
+        grad_norm,
+        game_log_data,
         t_total,
         t_simulation,
         t_loss,
@@ -384,37 +458,53 @@ class LearningLoop:
         t_overhead,
     ):
         reward_scale = float(np.mean(np.abs(batch_rewards)) + 1e-8)
-        diversity_coef_effective = (
-            float(self.config.get("diversity_coef", 0.1)) * reward_scale
-        )
+        continuous_weight = float(self.config.get("continuous_weight", 0.01))
+        diversity_coef_effective = float(self.config.get("diversity_coef", 0.1)) * reward_scale
+
+        n_games = max(games_per_epoch, 1)
+        bonus_rates = {
+            f"bonus/{k}": v / n_games for k, v in bonus_totals.items()
+        }
 
         wandb.log(
             data={
                 "epoch": epoch,
-                # Timing
+                # ── Timing ────────────────────────────────────────────────
                 "time/total": t_total,
                 "time/simulation": t_simulation,
                 "time/loss_forward": t_loss,
                 "time/grad_step": t_grad,
-                "time/stats_logging": t_stats,
+                "time/stats": t_stats,
                 "time/overhead": t_overhead,
                 "time/steps_per_sec": total_steps / t_total if t_total > 0 else 0.0,
                 "time/frac_simulation": t_simulation / t_total if t_total > 0 else 0.0,
                 "time/frac_gpu": (t_loss + t_grad) / t_total if t_total > 0 else 0.0,
-                # Training signal
-                "train/loss": loss.item() if loss.requires_grad else 0.0,
+                # ── Loss ──────────────────────────────────────────────────
+                "loss/total": loss.item() if loss.requires_grad else 0.0,
+                "loss/discrete": loss_discrete,
+                "loss/continuous": loss_continuous,
+                "loss/continuous_weight": continuous_weight,
+                "loss/diversity_coef_effective": diversity_coef_effective,
+                # ── Training signal ───────────────────────────────────────
                 "train/avg_reward": avg_reward,
                 "train/reward_std": np.std(batch_rewards),
                 "train/reward_max": np.max(batch_rewards),
                 "train/reward_min": np.min(batch_rewards),
-                "train/avg_trajectory_len": np.mean(
-                    [len(t) for t in batch_trajectories]
-                ),
                 "train/total_steps": total_steps,
-                "train/grad_norm": self._get_grad_norm(),
+                "train/grad_norm": grad_norm,
                 "train/learning_rate": self.optimizer.param_groups[0]["lr"],
-                "train/diversity_coef_effective": diversity_coef_effective,
+                # ── Per-action baselines ───────────────────────────────────
+                "baseline/fold": self._action_baselines[0],
+                "baseline/bet": self._action_baselines[1],
+                "baseline/call": self._action_baselines[2],
+                # ── Per-action advantages ──────────────────────────────────
+                **adv_stats,
+                # ── Action frequencies & game stats ───────────────────────
                 **action_stats,
+                # ── Game-level metrics from simulation ────────────────────
+                **game_log_data,
+                # ── Bonus event rates (per game) ──────────────────────────
+                **bonus_rates,
             }
         )
 
@@ -424,64 +514,144 @@ class LearningLoop:
 
     def _compute_reinforce_loss(
         self, batch_trajectories: list
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, float, dict]:
         """
         Compute the REINFORCE loss over a batch of episodes.
 
+        Per-action baselines
+        --------------------
+        Baselines use a rolling mean over the last N epochs of raw rewards
+        per action type.  This adapts much faster than EMA with small alpha
+        and remains interpretable: the baseline for each action is simply
+        the average reward that action has produced recently.
+
+        Continuous loss masking
+        -----------------------
+        The bet distribution loss is computed only for BET steps.  Computing
+        it on FOLD/CALL steps produces spurious gradients on bet_mean and
+        bet_std because bet_tensor is a placeholder for those actions.
+
         Returns
         -------
-        loss             : scalar tensor (reinforce + diversity penalty)
-        mean_probs       : [3] mean action probabilities across all steps
-        diversity_penalty: scalar tensor (zero if no collapse detected)
+        loss                    : scalar tensor (reinforce + diversity penalty)
+        mean_probs              : [3] mean action probabilities across all steps
+        diversity_penalty       : scalar tensor
+        reinforce_discrete_mean : float  (for logging)
+        reinforce_continuous_mean : float  (for logging)
+        adv_stats               : dict of per-action advantage mean/std for wandb
         """
         device = self.device
 
         episode_rewards = np.array(
-            [t[0][2] for t in batch_trajectories if t],
+            [reward for t in batch_trajectories for _, _, reward in t],
             dtype=np.float32,
         )
 
         if episode_rewards.std() < 1e-8:
             zero = torch.tensor(0.0, requires_grad=False, device=device)
-            return zero, torch.zeros(3, device=device), zero
+            return zero, torch.zeros(3, device=device), zero, 0.0, 0.0, {}
 
-        flat_trajectory = []
-        flat_advantages = []
-        reward_std = episode_rewards.std() + 1e-8
-        reward_mean = episode_rewards.mean()
+        # ── Single pass: collect flat data ───────────────────────────────
+        total_steps = sum(len(t) for t in batch_trajectories)
+
+        flat_preprocessed = [None] * total_steps
+        flat_actions = [None] * total_steps
+        raw_rewards = np.empty(total_steps, dtype=np.float64)
+        action_indices = np.empty(total_steps, dtype=np.int64)
+
+        idx = 0
         for traj in batch_trajectories:
             for preprocessed, action, reward in traj:
-                flat_trajectory.append((preprocessed, action))
-                flat_advantages.append((reward - reward_mean) / reward_std)
+                flat_preprocessed[idx] = preprocessed
+                flat_actions[idx] = action
+                raw_rewards[idx] = reward
+                action_indices[idx] = int(action.action_tensor.item())
+                idx += 1
 
-        if not flat_trajectory:
+        if idx == 0:
             zero = torch.tensor(0.0, device=device, requires_grad=True)
             return (
                 zero * sum(p.sum() for p in self.current_model.parameters()),
                 torch.zeros(3, device=device),
                 torch.tensor(0.0, device=device),
+                0.0,
+                0.0,
+                {},
             )
 
+        # ── Update rolling baselines ──────────────────────────────────────
+        # Extend each action's reward history with this epoch's observations,
+        # then recompute the baseline as the mean of the rolling window.
+        for action_idx in range(3):
+            mask = action_indices == action_idx
+            if mask.any():
+                epoch_mean = float(raw_rewards[mask].mean())
+                self._action_reward_history[action_idx].append(epoch_mean)
+
+        self._action_baselines = np.array(
+            [np.mean(h) if h else 0.0 for h in self._action_reward_history]
+        )
+
+        # ── Per-action advantages on raw rewards ─────────────────────────
+        raw_advantages = raw_rewards - self._action_baselines[action_indices]
+
+        # ── Global normalisation ──────────────────────────────────────────
+        # Applied to advantages (not raw rewards) so gradient magnitudes stay
+        # stable while baseline semantics remain interpretable.
+        advantages = (raw_advantages - raw_advantages.mean()) / (
+            raw_advantages.std() + 1e-8
+        )
+
+        # ── Forward pass ─────────────────────────────────────────────────
+        flat_trajectory = list(zip(flat_preprocessed, flat_actions))
         action_logits, bet_mean, bet_std = self.current_model.forward_batch(
             flat_trajectory
         )
 
-        action_batch = torch.stack([a.action_tensor for _, a in flat_trajectory]).to(
-            device
-        )
-        bet_batch = torch.stack([a.bet_tensor for _, a in flat_trajectory]).to(device)
-        adv_batch = torch.tensor(flat_advantages, dtype=torch.float32, device=device)
+        action_batch = torch.stack([a.action_tensor for a in flat_actions]).to(device)
+        bet_batch = torch.stack([a.bet_tensor for a in flat_actions]).to(device)
+        adv_batch = torch.tensor(advantages, dtype=torch.float32, device=device)
 
+        # ── Discrete loss ─────────────────────────────────────────────────
         log_p_discrete = D.Categorical(logits=action_logits).log_prob(action_batch)
-        log_p_continuous = D.Normal(bet_mean, bet_std).log_prob(bet_batch).squeeze(-1)
-        reinforce_loss = (-adv_batch * (log_p_discrete + log_p_continuous)).mean()
+        reinforce_discrete = -adv_batch * log_p_discrete
+        disc_loss = reinforce_discrete.mean()
+
+        # ── Continuous loss — BET steps only ─────────────────────────────
+        is_bet = (action_batch == 1).float()
+        n_bets = is_bet.sum().clamp(min=1.0)
+        bet_std_clamped = bet_std.clamp(min=0.05)
+        log_p_continuous = (
+            D.Normal(bet_mean, bet_std_clamped).log_prob(bet_batch).squeeze(-1)
+        ).clamp(-5.0, 5.0)
+        reinforce_continuous = -adv_batch * log_p_continuous * is_bet
+        cont_loss = reinforce_continuous.sum() / n_bets
+
+        continuous_weight = float(self.config.get("continuous_weight", 0.01))
+        reinforce_loss = disc_loss + continuous_weight * cont_loss
 
         action_probs = D.Categorical(logits=action_logits).probs
         diversity_penalty, mean_probs = self._compute_diversity_penalty(
             action_probs, episode_rewards
         )
 
-        return reinforce_loss + diversity_penalty, mean_probs, diversity_penalty
+        # ── Per-action advantage stats for logging ────────────────────────
+        adv_stats = {}
+        for action_idx, name in enumerate(["fold", "bet", "call"]):
+            mask = action_indices == action_idx
+            if mask.any():
+                adv_for_action = advantages[mask]
+                adv_stats[f"advantage/mean_{name}"] = float(adv_for_action.mean())
+                adv_stats[f"advantage/std_{name}"] = float(adv_for_action.std())
+
+        return (
+            reinforce_loss + diversity_penalty,
+            mean_probs,
+            diversity_penalty,
+            disc_loss.item(),
+            (continuous_weight * cont_loss).item(),
+            adv_stats,
+        )
 
     def _compute_diversity_penalty(
         self, action_probs: torch.Tensor, all_rewards: np.ndarray
@@ -495,7 +665,7 @@ class LearningLoop:
         Parameters
         ----------
         action_probs : [N, 3]  probabilities already computed by forward_batch
-        batch_rewards: list of per-episode scalar rewards
+        all_rewards  : flat array of per-step rewards for scale estimation
 
         Returns
         -------
@@ -548,7 +718,7 @@ class LearningLoop:
         for trajectory in batch_trajectories:
             for _, action, _ in trajectory:
                 counts[action.action_type] += 1
-                if action.action_type == PlayerAction.BET:
+                if action.action_type == PlayerAction.BET and action.observation.bet_range.lower_bound > 0:
                     bet_amounts.append(action.bet_amount)
 
         total = sum(counts.values()) or 1
@@ -557,7 +727,7 @@ class LearningLoop:
             "action/bet": counts[PlayerAction.BET] / total,
             "action/call": counts[PlayerAction.CALL] / total,
             "action/bet_amount": np.mean(bet_amounts) if bet_amounts else 0.0,
-            "game/avg_hands_per_trajectory": np.mean(traj_lengths),
-            "game/min_hands_per_trajectory": np.min(traj_lengths),
-            "game/max_hands_per_trajectory": np.max(traj_lengths),
+            "game/avg_hands": np.mean(traj_lengths),
+            "game/min_hands": np.min(traj_lengths),
+            "game/max_hands": np.max(traj_lengths),
         }

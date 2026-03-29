@@ -15,7 +15,6 @@ class Player(ABC):
         self.stack = 0
         self.cards = []
         self.position = 0
-        self.all_in = False
         self.bet_this_street = 0
         self.money_in_pot = 0
         self.history = []
@@ -26,6 +25,10 @@ class Player(ABC):
         self.total_invested = 0
         self.penalty = penalty
         self.starting_stack = 0
+
+    @property
+    def all_in(self):
+        return self.state is PlayerState.ALL_IN
 
     def __lt__(self, other):
         return self.identifier < other.identifier
@@ -63,7 +66,7 @@ class Player(ABC):
         if amount >= self.stack:
             call_size = self.stack
             self.stack = 0
-            self.all_in = True
+            self.state = PlayerState.ALL_IN
             self.bet_this_street += call_size
             self.money_in_pot += call_size
             self.total_invested += call_size
@@ -88,7 +91,7 @@ class Player(ABC):
         self.has_acted = True
         self.acted_this_street = True
         if amount == self.stack:
-            self.all_in = True
+            self.state = PlayerState.ALL_IN
         amount = amount - self.bet_this_street
         self.stack -= amount
         self.bet_this_street += amount
@@ -118,7 +121,6 @@ class Player(ABC):
         self.state = PlayerState.ACTIVE
         self.has_acted = False
         self.acted_this_street = False
-        self.all_in = False
         self.bet_this_street = 0
         self.money_in_pot = 0
         self.cards = []
@@ -134,5 +136,5 @@ class Player(ABC):
         pass
 
     @abstractmethod
-    def new_hand(self, observation: Observation) -> Action:
+    def new_hand(self) -> Action:
         pass

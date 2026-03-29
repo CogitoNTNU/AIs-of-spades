@@ -3,21 +3,32 @@ weight_manager:
   max_models: 100
   keep_latest: 20
   sampling_mode: "linear"   # "uniform" or "linear" or "exponential"
-  checkpoint_dir: "res/checkpoint"
+  checkpoint_dir: "res/action-reward-test"
 
 learning_loop:
-  learning_rate: 1e-4        
-  lr_decay_steps: 10   
-  lr_decay_gamma: 0.99 
-  epochs: 10000
+  learning_rate: 3e-4
+  lr_decay_steps: 100
+  lr_decay_gamma: 0.9
+  epochs: 100000
   games_per_epoch: 60
   hands_per_game: 32
   save_interval: 100
-  save_every: 20
   num_workers: 8
   diversity_coef: 0.1
-  diversity_lo: 0.01  
-  diversity_hi: 0.99
+  diversity_lo: 0.05
+  diversity_hi: 0.90
+  action_baseline_window: 50
+  continuous_weight: 0.01
 
 game_loop:
-  decadiment_factor: 0.1
+  decadiment_factor: 0.8
+  elimination_bonus:  40.0   # half average starting stack
+  survival_bonus:    200.0   # rare event, strong global signal
+  isolation_bonus:     5.0   # mild nudge toward heads-up play
+  showdown_bonus:      5.0   # mild nudge toward staying in hands
+  steal_bonus:         5.0   # reinforce uncontested aggression
+  stack_lo:           50.0
+  stack_hi:          200.0
+  showdown_reward_multiplier_start:  2.0   # multiplier at epoch 0
+  showdown_reward_multiplier_end:    1.0   # multiplier once decay is complete
+  showdown_reward_multiplier_epochs: 3000  # epochs to reach end value (clamped after)

@@ -30,10 +30,11 @@ class ObsNN(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.ReLU(),
+            nn.LayerNorm(hidden_dim),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
+            nn.LayerNorm(hidden_dim),
             nn.Linear(hidden_dim, out_dim),
-            nn.ReLU(),
         )
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:

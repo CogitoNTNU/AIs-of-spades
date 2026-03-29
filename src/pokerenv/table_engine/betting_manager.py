@@ -29,7 +29,7 @@ class BettingManager:
         others_active = [
             p
             for p in players
-            if p.state is PlayerState.ACTIVE and not p.all_in and p is not player
+            if p.state is PlayerState.ACTIVE and p is not player
         ]
 
         min_bet = max(self.bet_to_match + self.minimum_raise, 1.0)
