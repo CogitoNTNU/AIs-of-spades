@@ -646,14 +646,19 @@ class LearningLoop:
             action_probs, episode_rewards
         )
 
-        # ── Per-action advantage stats for logging ────────────────────────
+        # ── Per-action advantage and weight stats for logging ─────────────
         adv_stats = {}
+        weight_total = step_weights.sum()
         for action_idx, name in enumerate(["fold", "bet", "call"]):
             mask = action_indices == action_idx
             if mask.any():
                 adv_for_action = advantages[mask]
                 adv_stats[f"advantage/mean_{name}"] = float(adv_for_action.mean())
                 adv_stats[f"advantage/std_{name}"] = float(adv_for_action.std())
+                adv_stats[f"weight/value_{name}"] = float(step_weights[mask][0])
+                adv_stats[f"weight/eff_frac_{name}"] = float(
+                    step_weights[mask].sum() / weight_total
+                )
 
         return (
             reinforce_loss + diversity_penalty,
