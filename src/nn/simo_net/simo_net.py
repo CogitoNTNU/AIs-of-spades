@@ -78,7 +78,7 @@ class SimoNet(PokerNet):
         obs_hidden: int = 64,
         hand_state_dim: int = 64,
         game_state_dim: int = 64,
-        shuffle_opponents: bool = True,
+        shuffle_opponents: bool = False,
     ) -> None:
         super().__init__()
 
@@ -176,7 +176,7 @@ class SimoNet(PokerNet):
         Shared encode+decode path.  Returns (action_logits, bet_mean, bet_std).
         Opponent shuffle is applied here when self.training and self.shuffle_opponents.
         """
-        if self.shuffle_opponents and self.training:
+        if self.shuffle_opponents:
             device = opp_vecs.device
             perm = torch.randperm(MAX_OPPONENTS, device=device)
             opp_vecs = opp_vecs[:, perm, :]

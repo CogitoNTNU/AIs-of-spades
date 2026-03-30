@@ -602,6 +602,17 @@ class LearningLoop:
             raw_advantages.std() + 1e-8
         )
 
+        # ── Sqrt inverse-frequency weights ───────────────────────────────
+        # Weight each step by sqrt(N / n_action) so minority actions
+        # (e.g. BET at 3%) contribute more gradient mass than their raw
+        # frequency, without going all the way to uniform 1/3 weighting.
+        # Example at 88/7/3%: effective contribution becomes ~69/19/13%.
+        step_weights = np.empty(idx, dtype=np.float32)
+        for a_idx in range(3):
+            mask = action_indices == a_idx
+            n = mask.sum()
+            step_weights[mask] = np.sqrt(idx / n) if n > 0 else 1.0
+
         # ── Forward pass ─────────────────────────────────────────────────
         flat_trajectory = list(zip(flat_preprocessed, flat_actions))
         action_logits, bet_mean, bet_std = self.current_model.forward_batch(
@@ -611,21 +622,21 @@ class LearningLoop:
         action_batch = torch.stack([a.action_tensor for a in flat_actions]).to(device)
         bet_batch = torch.stack([a.bet_tensor for a in flat_actions]).to(device)
         adv_batch = torch.tensor(advantages, dtype=torch.float32, device=device)
+        weight_batch = torch.tensor(step_weights, dtype=torch.float32, device=device)
 
         # ── Discrete loss ─────────────────────────────────────────────────
         log_p_discrete = D.Categorical(logits=action_logits).log_prob(action_batch)
-        reinforce_discrete = -adv_batch * log_p_discrete
-        disc_loss = reinforce_discrete.mean()
+        reinforce_discrete = -adv_batch * log_p_discrete * weight_batch
+        disc_loss = reinforce_discrete.sum() / weight_batch.sum()
 
         # ── Continuous loss — BET steps only ─────────────────────────────
         is_bet = (action_batch == 1).float()
-        n_bets = is_bet.sum().clamp(min=1.0)
         bet_std_clamped = bet_std.clamp(min=0.05)
         log_p_continuous = (
             D.Normal(bet_mean, bet_std_clamped).log_prob(bet_batch).squeeze(-1)
         ).clamp(-5.0, 5.0)
-        reinforce_continuous = -adv_batch * log_p_continuous * is_bet
-        cont_loss = reinforce_continuous.sum() / n_bets
+        reinforce_continuous = -adv_batch * log_p_continuous * is_bet * weight_batch
+        cont_loss = reinforce_continuous.sum() / (is_bet * weight_batch).sum().clamp(min=1.0)
 
         continuous_weight = float(self.config.get("continuous_weight", 0.01))
         reinforce_loss = disc_loss + continuous_weight * cont_loss
