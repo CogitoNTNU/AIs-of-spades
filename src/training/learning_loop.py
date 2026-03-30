@@ -612,6 +612,9 @@ class LearningLoop:
             mask = action_indices == a_idx
             n = mask.sum()
             step_weights[mask] = np.sqrt(idx / n) if n > 0 else 1.0
+        # Renormalise so sum(w) == N, keeping disc_loss on the same scale as
+        # an unweighted mean.  This preserves the continuous_weight ratio.
+        step_weights *= idx / step_weights.sum()
 
         # ── Forward pass ─────────────────────────────────────────────────
         flat_trajectory = list(zip(flat_preprocessed, flat_actions))
