@@ -606,11 +606,16 @@ class LearningLoop:
         # comparable gradient scale while preserving the cross-action signal
         # already encoded in the baselines.
         advantages = np.empty_like(raw_advantages)
+        global_std = float(raw_advantages.std()) + 1e-8  # fallback scale
         for a_idx in range(3):
             mask = action_indices == a_idx
             if mask.any():
                 s = raw_advantages[mask]
-                advantages[mask] = s / (s.std() + 1e-8)
+                # Use per-action std, but floor at global_std to avoid
+                # exploding advantages when an action has very few samples
+                # (low sample count → std ≈ 0 → division by ~1e-8).
+                std = max(float(s.std()), global_std)
+                advantages[mask] = s / std
             else:
                 advantages[mask] = 0.0
 
