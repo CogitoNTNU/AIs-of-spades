@@ -14,9 +14,10 @@ learning_loop:
   hands_per_game: 32
   save_interval: 100
   num_workers: 8
-  diversity_coef: 0.1
-  diversity_lo: 0.05
-  diversity_hi: 0.90
+  diversity_coef: 0.15
+  diversity_lo: 0.08
+  diversity_hi: 0.80
+  entropy_coef: 0.05
   action_baseline_window: 50
   continuous_weight: 0.01
   grad_clip_norm: 1.0
@@ -26,8 +27,8 @@ game_loop:
   elimination_bonus:  40.0   # half average starting stack
   survival_bonus:    200.0   # rare event, strong global signal
   isolation_bonus:     5.0   # mild nudge toward heads-up play
-  showdown_bonus:      5.0   # mild nudge toward staying in hands
-  steal_bonus:         5.0   # reinforce uncontested aggression
+  showdown_bonus:      2.0   # mild nudge toward staying in hands
+  steal_bonus:         8.0   # reinforce uncontested aggression
   stack_lo:           50.0
   stack_hi:          200.0
   showdown_reward_multiplier_start:  2.0   # multiplier at epoch 0
