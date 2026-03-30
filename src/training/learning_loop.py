@@ -311,7 +311,7 @@ class LearningLoop:
 
         # ── Gradient step ─────────────────────────────────────────────
         t0 = time.time()
-        self._gradient_step(loss)
+        grad_norm_raw = self._gradient_step(loss)
         self.scheduler.step()
         t_grad = time.time() - t0
 
@@ -320,7 +320,7 @@ class LearningLoop:
         action_stats = self._compute_action_stats(batch_trajectories)
         t_stats = time.time() - t0
 
-        # Compute grad norm once — reused in both print and log
+        # Post-clip grad norm — reused in both print and log
         grad_norm = self._get_grad_norm()
 
         t_total = time.time() - t_epoch_start
@@ -339,7 +339,7 @@ class LearningLoop:
             f"loss={loss.item():+.4f}  "
             f"reward={avg_reward:+8.1f}±{np.std(batch_rewards):.1f}  "
             f"steps={total_steps:>5}  {probs_str}  "
-            f"grad={grad_norm:.3f}  "
+            f"grad={grad_norm:.3f}  grad_raw={grad_norm_raw:.3f}  "
             f"sim={t_simulation:.1f}s  fwd={t_loss:.1f}s  bwd={t_grad:.1f}s",
             flush=True,
         )
@@ -372,6 +372,7 @@ class LearningLoop:
             games_per_epoch=games_per_epoch,
             adv_stats=adv_stats,
             grad_norm=grad_norm,
+            grad_norm_raw=grad_norm_raw,
             game_log_data=game_log_data,
             t_total=t_total,
             t_simulation=t_simulation,
@@ -449,6 +450,7 @@ class LearningLoop:
         games_per_epoch,
         adv_stats,
         grad_norm,
+        grad_norm_raw,
         game_log_data,
         t_total,
         t_simulation,
@@ -492,6 +494,7 @@ class LearningLoop:
                 "train/reward_min": np.min(batch_rewards),
                 "train/total_steps": total_steps,
                 "train/grad_norm": grad_norm,
+                "train/grad_norm_raw": grad_norm_raw,
                 "train/learning_rate": self.optimizer.param_groups[0]["lr"],
                 # ── Per-action baselines ───────────────────────────────────
                 "baseline/fold": self._action_baselines[0],
@@ -595,23 +598,37 @@ class LearningLoop:
         # ── Per-action advantages on raw rewards ─────────────────────────
         raw_advantages = raw_rewards - self._action_baselines[action_indices]
 
-        # ── Global normalisation ──────────────────────────────────────────
-        # Applied to advantages (not raw rewards) so gradient magnitudes stay
-        # stable while baseline semantics remain interpretable.
-        advantages = (raw_advantages - raw_advantages.mean()) / (
-            raw_advantages.std() + 1e-8
-        )
+        # ── Per-action std normalisation ─────────────────────────────────
+        # Per-action baselines already centre each action's distribution, so
+        # the global mean of raw_advantages ≈ 0.  The remaining problem is
+        # that a global std is dominated by the majority action (call ~97%).
+        # Dividing each action's slice by its own std gives every action a
+        # comparable gradient scale while preserving the cross-action signal
+        # already encoded in the baselines.
+        advantages = np.empty_like(raw_advantages)
+        for a_idx in range(3):
+            mask = action_indices == a_idx
+            if mask.any():
+                s = raw_advantages[mask]
+                advantages[mask] = s / (s.std() + 1e-8)
+            else:
+                advantages[mask] = 0.0
 
-        # ── Sqrt inverse-frequency weights ───────────────────────────────
-        # Weight each step by sqrt(N / n_action) so minority actions
-        # (e.g. BET at 3%) contribute more gradient mass than their raw
-        # frequency, without going all the way to uniform 1/3 weighting.
-        # Example at 88/7/3%: effective contribution becomes ~69/19/13%.
-        step_weights = np.empty(idx, dtype=np.float32)
+        # ── Sqrt inverse-frequency weights (positive advantages only) ────
+        # Weight each step by sqrt(N / n_action) to give minority actions
+        # more gradient mass — BUT only when the advantage is positive.
+        # Applying amplification to negative advantages creates a feedback
+        # loop: rare actions fail → amplified negative gradient → model
+        # avoids them even more → they become rarer → collapse to one action.
+        freq_weights = np.ones(idx, dtype=np.float32)
         for a_idx in range(3):
             mask = action_indices == a_idx
             n = mask.sum()
-            step_weights[mask] = np.sqrt(idx / n) if n > 0 else 1.0
+            if n > 0:
+                freq_weights[mask] = np.sqrt(idx / n)
+        # Apply frequency boost only where advantage is positive.
+        positive_adv = advantages > 0
+        step_weights = np.where(positive_adv, freq_weights, np.ones(idx, dtype=np.float32))
         # Renormalise so sum(w) == N, keeping disc_loss on the same scale as
         # an unweighted mean.  This preserves the continuous_weight ratio.
         step_weights *= idx / step_weights.sum()
@@ -705,16 +722,20 @@ class LearningLoop:
     # Optimizer helpers
     # ------------------------------------------------------------------
 
-    def _gradient_step(self, loss: torch.Tensor):
-        """Backprop + gradient clipping + optimizer step."""
+    def _gradient_step(self, loss: torch.Tensor) -> float:
+        """Backprop + gradient clipping + optimizer step.
+        Returns the pre-clip gradient norm (clip_grad_norm_ computes it internally)."""
         if not loss.requires_grad:
             print("[main] WARNING: loss has no grad — skipping backward", flush=True)
-            return
+            return 0.0
         self.optimizer.zero_grad()
         loss.backward()
         max_norm = float(self.config.get("grad_clip_norm", 1.0))
-        torch.nn.utils.clip_grad_norm_(self.current_model.parameters(), max_norm=max_norm)
+        pre_clip_norm = torch.nn.utils.clip_grad_norm_(
+            self.current_model.parameters(), max_norm=max_norm
+        ).item()
         self.optimizer.step()
+        return pre_clip_norm
 
     def _get_grad_norm(self) -> float:
         """L2 norm of all parameter gradients after backward()."""
