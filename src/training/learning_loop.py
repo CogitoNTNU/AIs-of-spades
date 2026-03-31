@@ -64,14 +64,14 @@ def _run_game(args):
 
         assert _worker_model is not None, "_worker_model not initialised — did _worker_init run?"
         _worker_model.load_state_dict(state_dict)
+        _worker_model.initialize_internal_state()
         _worker_model.eval()
 
         opponents = []
         for slot, osd in zip(_worker_opponents, opponent_state_dicts):
             if osd is not None:
                 slot.load_state_dict(osd)
-            else:
-                slot.initialize_internal_state()
+            slot.initialize_internal_state()
             slot.eval()
             opponents.append(slot)
 

@@ -437,7 +437,7 @@ class Table(gym.Env):
         active_can_act = [
             p for p in self.players if p.state is PlayerState.ACTIVE
         ]
-        if len(active_can_act) == 0:
+        if len(active_can_act) <= 1:
             transition_to_end = True
 
         hand_over = self.street_mgr.transition(
