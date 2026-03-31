@@ -1,6 +1,5 @@
 # ui/ai_player.py
 
-import math
 import torch
 import torch.distributions as D
 
@@ -43,11 +42,10 @@ class AIPlayer(UIPlayer):
         )
 
         return Action(
-            action_type=PlayerAction(d.item()),
-            action_tensor=d,
+            action_type=PlayerAction(int(d.item())),
             observation=obs,
             bet_amount=bet_value,
-            bet_tensor=bet_sample,
+            bet_normalized=float(bet_sample.item()),
         )
 
     def new_hand(self):

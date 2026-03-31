@@ -32,7 +32,6 @@ from pokerenv.common import PlayerAction
 from pokerenv.action import Action
 from pokerenv.player import Player
 
-import torch
 
 
 def _observation_to_dict(obs: Observation) -> dict:
@@ -161,7 +160,7 @@ class UIPlayer(Player):
         """
         action_type_str = message.get("action_type", "fold")
         bet_amount = float(message.get("bet_amount", 0.0))
-        observation = message.get("_observation")
+        observation: Observation = message.get("_observation") or Observation.empty()
 
         _map = {
             "check": PlayerAction.CALL,
@@ -174,22 +173,17 @@ class UIPlayer(Player):
         if action_type in (PlayerAction.FOLD, PlayerAction.CALL):
             bet_amount = 0.0
 
-        d = torch.tensor(action_type.value, dtype=torch.long)
-        bet_tensor = torch.tensor(0.0)
-
+        bet_normalized = 0.0
         if observation is not None and action_type is PlayerAction.BET:
             rng = observation.bet_range.upper_bound - observation.bet_range.lower_bound
             if rng > 0:
-                bet_tensor = torch.tensor(
-                    (bet_amount - observation.bet_range.lower_bound) / rng
-                ).clamp(0.0, 1.0)
+                bet_normalized = max(0.0, min(1.0, (bet_amount - observation.bet_range.lower_bound) / rng))
 
         self._pending_action = Action(
             action_type=action_type,
-            action_tensor=d,
             observation=observation,
             bet_amount=bet_amount,
-            bet_tensor=bet_tensor,
+            bet_normalized=bet_normalized,
         )
         self._action_event.set()
 
@@ -206,13 +200,11 @@ class UIPlayer(Player):
     # ------------------------------------------------------------------
 
     def _make_fold(self, observation: Observation) -> Action:
-        d = torch.tensor(PlayerAction.FOLD.value, dtype=torch.long)
         return Action(
             action_type=PlayerAction.FOLD,
-            action_tensor=d,
             observation=observation,
             bet_amount=0.0,
-            bet_tensor=torch.tensor(0.0),
+            bet_normalized=0.0,
         )
 
     async def send_message(self, payload: dict):

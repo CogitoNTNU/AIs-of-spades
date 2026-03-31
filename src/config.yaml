@@ -3,7 +3,7 @@ weight_manager:
   max_models: 100
   keep_latest: 20
   sampling_mode: "linear"   # "uniform" or "linear" or "exponential"
-  checkpoint_dir: "res/action-reward-test"
+  checkpoint_dir: "res/action-reward-test2"
 
 learning_loop:
   learning_rate: 3e-4
