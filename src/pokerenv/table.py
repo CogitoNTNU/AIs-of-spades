@@ -29,6 +29,7 @@ class Table(gym.Env):
         hand_history_location="hands/",
         hand_history_enabled=False,
         invalid_action_penalty=0,
+        evaluator=None,
     ):
         self.action_space = gym.spaces.Tuple(
             (gym.spaces.Discrete(4), gym.spaces.Box(-math.inf, math.inf, (1, 1)))
@@ -40,7 +41,7 @@ class Table(gym.Env):
         self.stack_low = stack_low
         self.stack_high = stack_high
 
-        self.evaluator = Evaluator()
+        self.evaluator = evaluator if evaluator is not None else Evaluator()
         self.rng = np.random.default_rng(None)
 
         self.betting = BettingManager()

@@ -16,10 +16,10 @@ class PlayerAgent(Player):
     def get_action(self, observation: Observation) -> Action:
         action_logits, bet_mean, bet_std = self.nn.forward(observation)
 
-        discrete_dist = D.Categorical(logits=action_logits)
+        discrete_dist = D.Categorical(logits=action_logits, validate_args=False)
         d = discrete_dist.sample()
 
-        continuous_dist = D.Normal(bet_mean, bet_std)
+        continuous_dist = D.Normal(bet_mean, bet_std, validate_args=False)
         bet_sample = continuous_dist.sample().clamp(0.0, 1.0)
 
         bet_value = (

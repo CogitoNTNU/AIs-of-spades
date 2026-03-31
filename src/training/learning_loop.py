@@ -34,6 +34,11 @@ _worker_model_class = None
 # not (Python class instantiation + NFS import hits on every attribute).
 _worker_opponents: list = []
 
+# Shared treys Evaluator — built once per worker at startup instead of once
+# per game.  The lookup table is static, so a single instance is safe to
+# reuse across all games in the same worker process.
+_worker_evaluator = None
+
 _MAX_OPPONENTS = 5
 
 
@@ -43,7 +48,8 @@ _MAX_OPPONENTS = 5
 
 
 def _worker_init(model_class):
-    global _worker_model, _worker_model_class, _worker_opponents
+    global _worker_model, _worker_model_class, _worker_opponents, _worker_evaluator
+    from treys import Evaluator
 
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
@@ -51,6 +57,7 @@ def _worker_init(model_class):
     _worker_model_class = model_class
     _worker_model = _build_model(model_class)
     _worker_opponents = [_build_model(model_class) for _ in range(_MAX_OPPONENTS)]
+    _worker_evaluator = Evaluator()
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +69,9 @@ def _run_game(args):
     try:
         state_dict, hands_per_game, opponent_state_dicts, game_config = args
 
-        assert _worker_model is not None, "_worker_model not initialised — did _worker_init run?"
+        assert (
+            _worker_model is not None
+        ), "_worker_model not initialised — did _worker_init run?"
         _worker_model.load_state_dict(state_dict)
         _worker_model.initialize_internal_state()
         _worker_model.eval()
@@ -77,7 +86,7 @@ def _run_game(args):
 
         with torch.no_grad():
             trajectory, bonus_events, log_data = Game(
-                opponents, _worker_model, game_config
+                opponents, _worker_model, game_config, evaluator=_worker_evaluator
             ).play(hands_per_game)
 
         # Clear network_internal_state before pickling back through the pool pipe.
@@ -564,6 +573,7 @@ class LearningLoop:
         flat_actions: list = [None] * total_steps
         raw_rewards = np.empty(total_steps, dtype=np.float32)
         action_indices = np.empty(total_steps, dtype=np.int64)
+        bet_norm_arr = np.empty(total_steps, dtype=np.float32)
 
         idx = 0
         for traj in batch_trajectories:
@@ -572,6 +582,7 @@ class LearningLoop:
                 flat_actions[idx] = action
                 raw_rewards[idx] = reward
                 action_indices[idx] = int(action.action_type)
+                bet_norm_arr[idx] = action.bet_normalized
                 idx += 1
 
         if raw_rewards[:idx].std() < 1e-8:
@@ -618,17 +629,14 @@ class LearningLoop:
             flat_trajectory
         )
 
-        action_batch = torch.tensor(
-            [int(a.action_type) for a in flat_actions], dtype=torch.int64, device=device
-        )
+        # action_indices already collected above — reuse it directly (zero-copy)
+        action_batch = torch.from_numpy(action_indices).to(device)
         # unsqueeze(-1) → [B, 1] to match bet_mean/bet_std shape [B, 1] from forward_batch
-        bet_batch = torch.tensor(
-            [a.bet_normalized for a in flat_actions], dtype=torch.float32, device=device
-        ).unsqueeze(-1)
+        bet_batch = torch.from_numpy(bet_norm_arr).unsqueeze(-1).to(device)
         adv_batch = torch.tensor(advantages, dtype=torch.float32, device=device)
 
         # ── Discrete loss ─────────────────────────────────────────────────
-        action_dist = D.Categorical(logits=action_logits)
+        action_dist = D.Categorical(logits=action_logits, validate_args=False)
         log_p_discrete = action_dist.log_prob(action_batch)
         reinforce_discrete = -adv_batch * log_p_discrete
         disc_loss = reinforce_discrete.mean()
@@ -638,7 +646,7 @@ class LearningLoop:
         n_bets = is_bet.sum().clamp(min=1.0)
         bet_std_clamped = bet_std.clamp(min=0.05)
         log_p_continuous = (
-            D.Normal(bet_mean, bet_std_clamped).log_prob(bet_batch).squeeze(-1)
+            D.Normal(bet_mean, bet_std_clamped, validate_args=False).log_prob(bet_batch).squeeze(-1)
         ).clamp(-5.0, 5.0)
         reinforce_continuous = -adv_batch * log_p_continuous * is_bet
         cont_loss = reinforce_continuous.sum() / n_bets
