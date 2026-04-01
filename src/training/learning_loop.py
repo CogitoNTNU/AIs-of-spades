@@ -158,6 +158,10 @@ class LearningLoop:
         ]
         self._action_baselines = np.zeros(3, dtype=np.float64)
 
+        # Cached opponent state_dicts — resampled every opponent_resample_interval epochs.
+        self._cached_opponent_state_dicts: list | None = None
+        self._opponent_last_sampled_epoch: int = -9999
+
     # ------------------------------------------------------------------
     # Checkpoint management
     # ------------------------------------------------------------------
@@ -284,6 +288,15 @@ class LearningLoop:
                 deque(h, maxlen=baseline_window) for h in self._action_reward_history
             ]
 
+        resample_interval = self._get_schedule_value("opponent_resample_interval", 1, epoch)
+        if (self._cached_opponent_state_dicts is None or
+                epoch - self._opponent_last_sampled_epoch >= resample_interval):
+            self._cached_opponent_state_dicts = [
+                self.weight_manager.sample_opponent_state_dict()
+                for _ in range(_MAX_OPPONENTS)
+            ]
+            self._opponent_last_sampled_epoch = epoch
+
         state_dict = {k: v.cpu() for k, v in self.current_model.state_dict().items()}
 
         mult_start = float(
@@ -301,7 +314,8 @@ class LearningLoop:
         }
 
         worker_args = self._build_worker_args(
-            state_dict, games_per_epoch, hands_per_game, game_config_epoch
+            state_dict, games_per_epoch, hands_per_game,
+            self._cached_opponent_state_dicts, game_config_epoch
         )
 
         # ── Simulation ────────────────────────────────────────────────
@@ -411,6 +425,7 @@ class LearningLoop:
             bonus_totals=bonus_totals,
             games_per_epoch=games_per_epoch,
             hands_per_game=hands_per_game,
+            resample_interval=resample_interval,
             adv_stats=adv_stats,
             grad_norm=grad_norm,
             game_log_data=game_log_data,
@@ -441,26 +456,21 @@ class LearningLoop:
     # ------------------------------------------------------------------
 
     def _build_worker_args(
-        self, state_dict, games_per_epoch, hands_per_game, game_config=None
+        self, state_dict, games_per_epoch, hands_per_game, opponent_state_dicts,
+        game_config=None
     ):
         """
         Build one argument tuple per game.
 
-        Opponent state_dicts are sampled here on the main process (WeightManager
-        is not multiprocess-safe).  Each game receives independently sampled
-        opponents, preserving population diversity even though opponent slots
-        inside workers are reused across games.
+        Opponent state_dicts are pre-sampled by the caller (WeightManager is not
+        multiprocess-safe) and reused across all games in the epoch according to
+        the opponent_resample_interval schedule.
         """
         if game_config is None:
             game_config = self.game_config
         args = []
-        none_count = 0
+        none_count = sum(1 for osd in opponent_state_dicts if osd is None)
         for _ in range(games_per_epoch):
-            opponent_state_dicts = [
-                self.weight_manager.sample_opponent_state_dict()
-                for _ in range(_MAX_OPPONENTS)
-            ]
-            none_count += sum(1 for osd in opponent_state_dicts if osd is None)
             args.append((state_dict, hands_per_game, opponent_state_dicts, game_config))
 
         if none_count > 0:
@@ -489,6 +499,7 @@ class LearningLoop:
         bonus_totals,
         games_per_epoch,
         hands_per_game,
+        resample_interval,
         adv_stats,
         grad_norm,
         game_log_data,
@@ -536,6 +547,7 @@ class LearningLoop:
                 "train/total_hands": total_hands,
                 "train/games_per_epoch": games_per_epoch,
                 "train/hands_per_game": hands_per_game,
+                "train/opponent_resample_interval": resample_interval,
                 "train/grad_norm": grad_norm,
                 "train/learning_rate": self.optimizer.param_groups[0]["lr"],
                 # ── Per-action baselines ───────────────────────────────────
