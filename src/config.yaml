@@ -12,14 +12,14 @@ learning_loop:
   epochs: 100000
   games_per_epoch:
     0:     5
-    5000:  10
-    20000: 20
-    50000: 50
+    20000: 10
+    50000: 20
+    80000: 50
   hands_per_game:
     0:     70
-    5000:  50
-    20000: 40
-    50000: 30
+    20000:  50
+    50000: 40
+    80000: 30
   save_interval: 100
   num_workers: 8
   diversity_coef: 0.15
@@ -28,9 +28,9 @@ learning_loop:
   entropy_coef: 0.05
   action_baseline_window:
     0:     200
-    5000:  100
-    20000:  50
-    50000:  25
+    20000:  100
+    50000:  50
+    80000:  25
   continuous_weight: 0.01
   grad_clip_norm: 1.0
 
