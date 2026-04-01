@@ -405,6 +405,7 @@ class LearningLoop:
             action_stats=action_stats,
             bonus_totals=bonus_totals,
             games_per_epoch=games_per_epoch,
+            hands_per_game=hands_per_game,
             adv_stats=adv_stats,
             grad_norm=grad_norm,
             game_log_data=game_log_data,
@@ -482,6 +483,7 @@ class LearningLoop:
         action_stats,
         bonus_totals,
         games_per_epoch,
+        hands_per_game,
         adv_stats,
         grad_norm,
         game_log_data,
@@ -527,6 +529,8 @@ class LearningLoop:
                 "train/reward_min": np.min(batch_rewards),
                 "train/total_actions": total_actions,
                 "train/total_hands": total_hands,
+                "train/games_per_epoch": games_per_epoch,
+                "train/hands_per_game": hands_per_game,
                 "train/grad_norm": grad_norm,
                 "train/learning_rate": self.optimizer.param_groups[0]["lr"],
                 # ── Per-action baselines ───────────────────────────────────
@@ -579,13 +583,13 @@ class LearningLoop:
         device = self.device
 
         # ── Single pass: collect flat data ───────────────────────────────
-        total_steps = sum(len(t) for t in batch_trajectories)
+        total_actions = sum(len(t) for t in batch_trajectories)
 
-        flat_preprocessed: list = [None] * total_steps
-        flat_actions: list = [None] * total_steps
-        raw_rewards = np.empty(total_steps, dtype=np.float32)
-        action_indices = np.empty(total_steps, dtype=np.int64)
-        bet_norm_arr = np.empty(total_steps, dtype=np.float32)
+        flat_preprocessed: list = [None] * total_actions
+        flat_actions: list = [None] * total_actions
+        raw_rewards = np.empty(total_actions, dtype=np.float32)
+        action_indices = np.empty(total_actions, dtype=np.int64)
+        bet_norm_arr = np.empty(total_actions, dtype=np.float32)
 
         idx = 0
         for traj in batch_trajectories:
@@ -774,7 +778,7 @@ class LearningLoop:
             "action/bet": counts[PlayerAction.BET] / total,
             "action/call": counts[PlayerAction.CALL] / total,
             "action/bet_amount": np.mean(bet_amounts) if bet_amounts else 0.0,
-            "game/avg_hands": np.mean(traj_lengths),
-            "game/min_hands": np.min(traj_lengths),
-            "game/max_hands": np.max(traj_lengths),
+            "game/avg_actions_per_game": np.mean(traj_lengths),
+            "game/min_actions_per_game": np.min(traj_lengths),
+            "game/max_actions_per_game": np.max(traj_lengths),
         }
