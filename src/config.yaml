@@ -12,12 +12,12 @@ learning_loop:
   epochs: 100000
   games_per_epoch:
     0:     5
-    20000: 10
+    30000: 10
     50000: 20
-    80000: 50
+    80000: 30
   hands_per_game:
     0:     70
-    20000:  50
+    30000: 50
     50000: 40
     80000: 30
   save_interval: 100
@@ -27,12 +27,17 @@ learning_loop:
   diversity_hi: 0.80
   entropy_coef: 0.05
   action_baseline_window:
-    0:     200
-    20000:  100
+    0:      200
+    30000:  100
     50000:  50
     80000:  25
   continuous_weight: 0.01
   grad_clip_norm: 1.0
+  opponent_resample_interval:
+    0:      1000   # early: master one opponent before moving on
+    30000:  200
+    50000:  100
+    80000:   20   # late: fine-tune against fresh opponents frequently
 
 game_loop:
   decadiment_factor: 0.8
