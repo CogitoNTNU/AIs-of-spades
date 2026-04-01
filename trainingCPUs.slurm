@@ -2,11 +2,11 @@
 #SBATCH --account=studiegrupper-cogito
 #SBATCH --job-name="ais-of-spades"
 #SBATCH --time=100:00:00
-#SBATCH --cpus-per-task=6 
+#SBATCH --cpus-per-task=6
 #SBATCH --mem=50GB
 #SBATCH --nodes=1
-#SBATCH --output=slurm_outputs/output_combined.txt
-#SBATCH --error=slurm_outputs/output_combined.err
+#SBATCH --output=slurm_outputs/%x/output.txt
+#SBATCH --error=slurm_outputs/%x/output.err
 #SBATCH --mail-user=simonee@stud.ntnu.no
 #SBATCH --mail-type=ALL
 
@@ -22,6 +22,6 @@ echo "ID of job: $SLURM_JOB_ID"
 echo "The job was run on these nodes: $SLURM_JOB_NODELIST"
 echo "CPUs allocated: $SLURM_CPUS_PER_TASK"    
 
-uv run python src/main.py --num-workers $((SLURM_CPUS_PER_TASK - 2)) --resume-latest
+uv run python src/main.py --num-workers $((SLURM_CPUS_PER_TASK - 2)) --resume-latest --run-name "${SLURM_JOB_NAME}"
 
 echo "Job finished"
