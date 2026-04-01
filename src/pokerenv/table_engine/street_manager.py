@@ -100,7 +100,7 @@ class StreetManager:
         candidates = [
             i
             for i in range(n_players)
-            if players[i].state is PlayerState.ACTIVE and not players[i].all_in
+            if players[i].state is PlayerState.ACTIVE
         ]
         if not candidates:
             return None

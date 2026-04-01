@@ -15,6 +15,7 @@ from pokerenv.table_engine import (
 from pokerenv.utils import approx_gt, approx_lte
 
 BB = 5
+MIN_STACK_TO_PLAY = 1
 
 
 class Table(gym.Env):
@@ -60,7 +61,8 @@ class Table(gym.Env):
         self.first_to_act = None
 
         self.hand_number = 0
-        self.hand_log = np.full((32, 4), -1.0)
+        self.hand_log_shape = (64, 8)
+        self.hand_log = np.full(self.hand_log_shape, -1.0)
 
         self.dealer_position = 0
         self.showdown_cards: dict = {}
@@ -73,121 +75,106 @@ class Table(gym.Env):
     # Public API
     # ------------------------------------------------------------------
 
-    def reset(self):
+    def _start_new_hand(self, reset_stacks=False):
+        # Reset core state
         self.current_turn = 0
-        self.active_players = self.n_players
-        self.next_player_i = 0 if self.n_players == 2 else 2
-        self.current_player_i = self.next_player_i
         self.first_to_act = None
         self.street_finished = False
         self.hand_is_over = False
 
+        self.hand_log = np.full(self.hand_log_shape, -1.0)
         self.hand_number = 0
-        self.hand_log = np.full((32, 4), -1.0)
 
+        # Reset managers
         self.betting.reset()
         self.pot_mgr.reset()
         self.street_mgr.reset()
         self.hh.reset()
 
-        initial_draw = self.street_mgr.deal_hole_cards(self.n_players)
-        for i, player in enumerate(self.players):
-            player.reset()
-            player.position = i
-            player.cards = [initial_draw[i], initial_draw[i + self.n_players]]
-            player.set_stack(self.rng.integers(self.stack_low, self.stack_high, 1)[0])
-
-        self.dealer_position = 0
-
-        if self.hh.enabled:
-            self.hh.initialize(self.players)
-
-        self._post_blinds()
-
-        for player in self.players:
-            player.acted_this_street = False
-
-        if self.hh.enabled:
-            self.hh.write_hole_cards(self.players)
-
-        return self._get_observation(self.players[self.next_player_i])
-
-    def reset_hand(self):
-        self.current_turn = 0
-        self.active_players = self.n_players
-        self.first_to_act = None
-        self.street_finished = False
-        self.hand_is_over = False
-
-        self.betting.reset()
-        self.pot_mgr.reset()
-        self.street_mgr.reset()
-        self.hh.reset()
-
-        self.hand_log = np.full((32, 4), -1.0)
-        self.hand_number = 0
-
-        # Rotate dealer button by exactly one seat
-        self.dealer_position = (self.dealer_position + 1) % self.n_players
-
-        # Assign positions fresh: (seat - dealer) % n
-        # dealer seat → BTN (position n-1)
-        # dealer+1    → SB  (position 0)
-        # dealer+2    → BB  (position 1)
-        # dealer+3    → UTG (position 2, first to act preflop)
+        # Assign positions based on dealer
         for i, player in enumerate(self.players):
             player.position = (i - self.dealer_position) % self.n_players
 
+        # Deal cards
         initial_draw = self.street_mgr.deal_hole_cards(self.n_players)
+
+        # Reset players
+        self.active_players = 0
         for i, player in enumerate(self.players):
             player.reset()
-            player.cards = [initial_draw[i], initial_draw[i + self.n_players]]
 
-        MIN_STACK_TO_PLAY = 1
-        for player in self.players:
+            # Optionally reset stacks (only in reset())
+            if reset_stacks:
+                player.set_stack(
+                    self.rng.integers(self.stack_low, self.stack_high, 1)[0]
+                )
+
+            # Determine state
             if player.stack < MIN_STACK_TO_PLAY:
                 player.state = PlayerState.OUT
-                self.active_players -= 1
+                continue
 
+            player.state = PlayerState.ACTIVE
+            self.active_players += 1
+
+            # Assign cards
+            player.cards = [
+                initial_draw[i],
+                initial_draw[i + self.n_players],
+            ]
+
+        if self.active_players == 0:
+            raise Exception("No active players")
+
+        # Hand history init
         if self.hh.enabled:
             self.hh.initialize(self.players)
 
+        # Post blinds
         self._post_blinds()
 
+        # Reset action flags
         for player in self.players:
             player.acted_this_street = False
 
-        # Find first player to act preflop
+        # Determine first player to act
+        active_indices = [
+            i for i, p in enumerate(self.players) if p.state is PlayerState.ACTIVE
+        ]
+
         if self.n_players == 2:
-            first_i = next(
-                i
-                for i, p in enumerate(self.players)
-                if p.position == TablePosition.SB and p.state is PlayerState.ACTIVE
-            )
-        else:
             first_i = next(
                 (
                     i
-                    for i, p in enumerate(self.players)
-                    if p.position == 2 and p.state is PlayerState.ACTIVE
+                    for i in active_indices
+                    if self.players[i].position == TablePosition.SB
                 ),
-                next(
-                    (
-                        i
-                        for i, p in enumerate(self.players)
-                        if p.state is PlayerState.ACTIVE
-                    ),
-                    0,
-                ),
+                active_indices[0],
+            )
+        else:
+            first_i = next(
+                (i for i in active_indices if self.players[i].position == 2),  # UTG
+                active_indices[0],
             )
 
         self.next_player_i = first_i
         self.current_player_i = first_i
 
+        # Write hole cards
         if self.hh.enabled:
             self.hh.write_hole_cards(self.players)
 
         return self._get_observation(self.players[self.next_player_i])
+
+    def reset(self):
+        # New episode → reset dealer + stacks
+        self.dealer_position = 0
+        return self._start_new_hand(reset_stacks=True)
+
+    def reset_hand(self):
+        # Same episode → rotate dealer, keep stacks
+        self.dealer_position = (self.dealer_position + 1) % self.n_players
+        return self._start_new_hand(reset_stacks=False)
 
     def step(self, action: Action):
         self.current_player_i = self.next_player_i
@@ -195,7 +182,7 @@ class Table(gym.Env):
         self.current_turn += 1
 
         if (
-            player.all_in or player.state is not PlayerState.ACTIVE
+            player.state is not PlayerState.ACTIVE
         ) and not self.hand_is_over:
             raise Exception("A player who is inactive or all-in was allowed to act")
 
@@ -227,41 +214,50 @@ class Table(gym.Env):
     # ------------------------------------------------------------------
 
     def _post_blinds(self):
-        for player in sorted(self.players, key=lambda p: p.position):
-            if player.state is PlayerState.OUT:
-                continue
+        active_players = sorted(
+            [p for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)],
+            key=lambda p: p.position,
+        )
 
-            if player.position == TablePosition.SB:
-                amount = min(0.5, player.stack)
-                if amount > 0:
-                    self.pot_mgr.add(player.bet(amount))
-                    self.betting.change_bet_to_match(amount)
-                    self.hh.write(
-                        "%s: posts small blind $%.2f" % (player.name, amount * BB)
-                    )
+        if len(active_players) < 2:
+            return
 
-            elif player.position == TablePosition.BB:
-                amount = min(1, player.stack)
-                if amount > 0:
-                    self.pot_mgr.add(player.bet(amount))
-                    self.betting.change_bet_to_match(
-                        amount
-                    )  # ← coerente, minimum_raise = 0.5
-                    self.betting.minimum_raise = amount  # ← forza a 1 BB esatto
-                    self.betting.last_bet_placed_by = player
-                    self.hh.write(
-                        "%s: posts big blind $%.2f" % (player.name, amount * BB)
-                    )
+        if len(active_players) == 2:
+            # Dealer is SB in heads-up
+            sb_player = self._get_next_active_by_position(TablePosition.SB)
+            bb_player = [p for p in active_players if p != sb_player][0]
+        else:
+            sb_player = self._get_next_active_by_position(TablePosition.SB)
+
+            sb_index = active_players.index(sb_player)
+            bb_player = active_players[(sb_index + 1) % len(active_players)]
+
+        # Small blind
+        amount = min(0.5, sb_player.stack)
+        if amount > 0:
+            self.pot_mgr.add(sb_player.bet(amount))
+            self.betting.change_bet_to_match(amount)
+            self.hh.write("%s: posts small blind $%.2f" % (sb_player.name, amount * BB))
+
+        # Big blind
+        amount = min(1, bb_player.stack)
+        if amount > 0:
+            self.pot_mgr.add(bb_player.bet(amount))
+            self.betting.change_bet_to_match(amount)
+            self.betting.minimum_raise = amount
+            self.betting.last_bet_placed_by = bb_player
+            self.hh.write("%s: posts big blind $%.2f" % (bb_player.name, amount * BB))
 
     def _apply_action(self, player, action: Action):
         valid_actions = self.betting.get_valid_actions(player, self.players)
         action_list = valid_actions["actions_list"]
         bet_range = valid_actions["bet_range"]
 
-        # Se l'azione richiesta non è disponibile o la bet è fuori range → FOLD
+        # Se l'azione richiesta non è disponibile → FOLD, eccetto BET → CALL
         if action.action_type not in action_list:
+            fallback = PlayerAction.CALL if action.action_type is PlayerAction.BET else PlayerAction.FOLD
             action = Action(
-                action_type=PlayerAction.FOLD,
+                action_type=fallback,
                 action_tensor=action.action_tensor,
                 observation=action.observation,
                 bet_amount=0.0,
@@ -283,7 +279,7 @@ class Table(gym.Env):
             )
             if out_of_range or approx_gt(action.bet_amount, player.stack):
                 action = Action(
-                    action_type=PlayerAction.FOLD,
+                    action_type=PlayerAction.CALL,
                     action_tensor=action.action_tensor,
                     observation=action.observation,
                     bet_amount=0.0,
@@ -314,7 +310,7 @@ class Table(gym.Env):
                 self.update_hand_log(
                     player.identifier,
                     PlayerAction.CALL.value,
-                    call_size / stack,
+                    (call_size / self.pot_mgr.pot) if self.pot_mgr.pot > 0 else 0.0,
                     self.street_mgr.street,
                 )
                 self.hh.write(
@@ -325,7 +321,7 @@ class Table(gym.Env):
                 self.update_hand_log(
                     player.identifier,
                     PlayerAction.CALL.value,
-                    call_size / stack,
+                    (call_size / self.pot_mgr.pot) if self.pot_mgr.pot > 0 else 0.0,
                     self.street_mgr.street,
                 )
                 self.hh.write(
@@ -343,7 +339,7 @@ class Table(gym.Env):
                 self.update_hand_log(
                     player.identifier,
                     PlayerAction.BET.value,
-                    actual / stack,
+                    (actual / self.pot_mgr.pot) if self.pot_mgr.pot > 0 else 0.0,
                     self.street_mgr.street,
                 )
                 self.hh.write("%s: bets $%.2f%s" % (player.name, actual * BB, suffix))
@@ -351,7 +347,7 @@ class Table(gym.Env):
                 self.update_hand_log(
                     player.identifier,
                     PlayerAction.BET.value,
-                    actual / stack,
+                    (actual / self.pot_mgr.pot) if self.pot_mgr.pot > 0 else 0.0,
                     self.street_mgr.street,
                 )
                 self.hh.write(
@@ -369,7 +365,7 @@ class Table(gym.Env):
     def _check_street_or_hand_over(self):
         # Players who can still voluntarily act
         players_with_actions = [
-            p for p in self.players if p.state is PlayerState.ACTIVE and not p.all_in
+            p for p in self.players if p.state is PlayerState.ACTIVE
         ]
         # Players who still owe action: haven't acted yet OR are behind on the bet
         players_who_should_act = [
@@ -389,7 +385,7 @@ class Table(gym.Env):
 
     def _return_uncalled_and_finish(self, hand_over: bool):
         """Return any uncalled portion then end the hand or transition to next street."""
-        all_active = [p for p in self.players if p.state is PlayerState.ACTIVE]
+        all_active = [p for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)]
         if self.betting.last_bet_placed_by is not None:
             biggest_other = max(
                 (
@@ -413,7 +409,7 @@ class Table(gym.Env):
             players_can_act = [
                 p
                 for p in self.players
-                if p.state is PlayerState.ACTIVE and not p.all_in
+                if p.state is PlayerState.ACTIVE
             ]
             self._do_street_transition(transition_to_end=(len(players_can_act) == 0))
 
@@ -425,7 +421,6 @@ class Table(gym.Env):
             i
             for i in range(self.n_players)
             if self.players[i].state is PlayerState.ACTIVE
-            and not self.players[i].all_in
             and i != self.current_player_i
         ]
 
@@ -443,7 +438,7 @@ class Table(gym.Env):
 
     def _do_street_transition(self, transition_to_end=False):
         active_can_act = [
-            p for p in self.players if p.state is PlayerState.ACTIVE and not p.all_in
+            p for p in self.players if p.state is PlayerState.ACTIVE
         ]
         if len(active_can_act) == 0:
             transition_to_end = True
@@ -490,6 +485,10 @@ class Table(gym.Env):
         )
         self.hh.flush_to_disk()
 
+    def _get_next_active_by_position(self, target_pos):
+        candidates = [p for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)]
+        return min(candidates, key=lambda p: (p.position - target_pos) % self.n_players)
+
     def _get_observation(self, player):
         observation = np.zeros(58, dtype=np.float32)
         observation[0] = player.identifier
@@ -529,13 +528,28 @@ class Table(gym.Env):
         return observation
 
     def update_hand_log(self, player_id, action_value, bet_fraction, street):
+        hand_log_line = np.zeros(self.hand_log_shape[-1])
+
+        stack_norm = self.players[player_id].stack / self.stack_high
+        pot_norm = self.pot_mgr.pot / (
+            self.stack_high * self.n_players
+        )  # scala ragionevole
+        active = sum(1 for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN))
+        btm_norm = self.betting.bet_to_match / self.stack_high
+
+        hand_log_line[:8] = [
+            player_id,
+            action_value,
+            bet_fraction,
+            street,
+            pot_norm,
+            btm_norm,
+            active,
+            stack_norm,
+        ]
+
         if self.hand_number < self.hand_log.shape[0]:
-            self.hand_log[self.hand_number] = [
-                player_id,
-                action_value,
-                bet_fraction,
-                street,
-            ]
+            self.hand_log[self.hand_number] = hand_log_line
         else:
             self.hand_log = np.roll(self.hand_log, -1, axis=0)
-            self.hand_log[-1] = [player_id, action_value, bet_fraction, street]
+            self.hand_log[-1] = hand_log_line

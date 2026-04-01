@@ -5,7 +5,7 @@ import socket
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 import websockets
 import torch
@@ -92,6 +92,12 @@ class UITableManager:
         self._game_running: bool = False
         self._hand_ack_events: Dict[int, threading.Event] = {}
 
+        # --- Spectator support ---
+        self._spectators: Set = set()  # set of websocket objects
+        self._last_table_update: Optional[dict] = None  # last broadcast table_update
+        self._last_turn_indicator: Optional[dict] = None
+        self._current_stacks: Dict[str, float] = {}  # name -> stack (for leaderboard)
+
     # ------------------------------------------------------------------
     # Public entry-point
     # ------------------------------------------------------------------
@@ -129,6 +135,9 @@ class UITableManager:
             self.players.clear()
             self._name_to_seat.clear()
             self._last_obs.clear()
+            self._last_table_update = None
+            self._last_turn_indicator = None
+            self._current_stacks.clear()
 
     # ------------------------------------------------------------------
     # WebSocket handler
@@ -136,13 +145,78 @@ class UITableManager:
 
     async def _on_connect(self, websocket):
         seat = None
+        is_spectator = False
         try:
             async for raw in websocket:
                 msg = json.loads(raw)
                 mtype = msg.get("type")
 
                 if mtype == "join":
-                    name = msg.get("name", "Player").strip()
+                    name = msg.get("name", "").strip()
+
+                    # ── Game in progress: route to spectator ──────────
+                    if self._game_running or len(self.players) >= self.n_seats:
+                        # Check if it's a reconnecting player first
+                        name_key = name.lower() if name else ""
+                        reconnected_seat = None
+                        if name_key and name_key in self._name_to_seat:
+                            candidate = self._name_to_seat[name_key]
+                            player = self.players.get(candidate)
+                            if player is not None and not player.is_connected:
+                                reconnected_seat = candidate
+
+                        if reconnected_seat is not None:
+                            # It's a reconnecting player — handle normally
+                            seat, reconnected = self._assign_or_reconnect(
+                                websocket, name
+                            )
+                            if seat is not None:
+                                player = self.players[seat]
+                                await websocket.send(
+                                    json.dumps(
+                                        {
+                                            "type": "welcome",
+                                            "seat": seat,
+                                            "name": player.name,
+                                            "total_hands": self.total_hands,
+                                        }
+                                    )
+                                )
+                                log.info("Seat %d RECONNECTED as %s", seat, player.name)
+                                await self._send_reconnect_state(websocket, seat)
+                            continue
+
+                        # New connection during active game → spectator
+                        is_spectator = True
+                        self._spectators.add(websocket)
+                        log.info("New spectator connected (game in progress)")
+
+                        # Build spectator state snapshot
+                        snapshot = {
+                            "type": "spectator_init",
+                            "total_hands": self.total_hands,
+                        }
+                        if self._last_table_update:
+                            snapshot["table_update"] = self._last_table_update
+                        if self._last_turn_indicator:
+                            snapshot["turn_indicator"] = self._last_turn_indicator
+                        if self._current_stacks:
+                            snapshot["leaderboard"] = self._current_stacks
+                        await websocket.send(json.dumps(snapshot))
+                        continue
+
+                    # ── Normal join (lobby open) ──────────────────────
+                    if not name:
+                        await websocket.send(
+                            json.dumps(
+                                {
+                                    "type": "error",
+                                    "message": "Please enter a name.",
+                                }
+                            )
+                        )
+                        return
+
                     seat, reconnected = self._assign_or_reconnect(websocket, name)
 
                     if seat is None:
@@ -185,10 +259,16 @@ class UITableManager:
                     event = self._hand_ack_events.get(seat)
                     if event:
                         event.set()
+
         except websockets.exceptions.ConnectionClosed:
-            log.info("Seat %s disconnected", seat)
+            log.info(
+                "Seat/spectator %s disconnected",
+                seat if seat is not None else "spectator",
+            )
         finally:
-            if seat is not None and seat in self.players:
+            if is_spectator:
+                self._spectators.discard(websocket)
+            elif seat is not None and seat in self.players:
                 self.players[seat].detach_websocket()
 
     def _assign_or_reconnect(self, websocket, name: str):
@@ -247,6 +327,9 @@ class UITableManager:
         agents = [self.players[i] for i in sorted(self.players)]
         n = len(agents)
 
+        # Initialise stacks leaderboard
+        self._current_stacks = {a.name: float(a.stack) for a in agents}
+
         table = Table(
             n,
             players=agents,
@@ -259,7 +342,6 @@ class UITableManager:
         table.seed(None)
         table.reset()
 
-        # Track how many hh lines we've already pushed so we only push new ones
         _hh_pushed: int = 0
 
         def _push_new_hh_lines():
@@ -273,7 +355,7 @@ class UITableManager:
         for hand_index in range(self.total_hands):
             log.info("Hand %d / %d", hand_index + 1, self.total_hands)
 
-            _hh_pushed = 0  # Reset for each hand
+            _hh_pushed = 0
 
             for agent in agents:
                 agent.new_hand()
@@ -299,7 +381,7 @@ class UITableManager:
 
                 acting_agent = agents[acting_seat]
 
-                if acting_agent.state is not PlayerState.ACTIVE or acting_agent.all_in:
+                if acting_agent.state is not PlayerState.ACTIVE:
                     log.warning(
                         "Table asked inactive player %d — forcing _end_hand",
                         acting_seat,
@@ -314,7 +396,6 @@ class UITableManager:
                 action = acting_agent.get_action(obs)
                 obs_array, rewards, done = table.step(action)
 
-                # Push any new HH lines produced by this action
                 _push_new_hh_lines()
 
                 if done:
@@ -324,7 +405,7 @@ class UITableManager:
                 self._broadcast_sync(_build_table_update(obs, agents))
                 self._broadcast_sync(_build_turn_indicator(obs, agents))
 
-            # Broadcast board finale con community cards complete
+            # Broadcast board finale
             community = []
             for c in table.street_mgr.cards:
                 suit_bitmask = TreysCard.get_suit_int(c)
@@ -332,45 +413,42 @@ class UITableManager:
                 suit_idx = int(math.log2(suit_bitmask)) if suit_bitmask > 0 else 0
                 community.append({"suit": suit_idx, "rank": rank_idx})
 
-            self._broadcast_sync(
-                {
-                    "type": "table_update",
-                    "street": int(table.street_mgr.street),
-                    "pot": float(table.pot_mgr.pot),
-                    "bet_to_match": 0.0,
-                    "table_cards": community,
-                    "all_players": [
-                        {
-                            "seat": i,
-                            "name": agents[i].name,
-                            "position": int(agents[i].position),
-                            "state": agents[i].state.value,
-                            "stack": float(agents[i].stack),
-                            "money_in_pot": float(agents[i].money_in_pot),
-                            "bet_this_street": float(agents[i].bet_this_street),
-                            "is_all_in": bool(agents[i].all_in),
-                        }
-                        for i in range(n)
-                    ],
-                    # Keep legacy "others" for compatibility
-                    "others": [
-                        {
-                            "position": int(agents[i].position),
-                            "state": agents[i].state.value,
-                            "stack": float(agents[i].stack),
-                            "money_in_pot": float(agents[i].money_in_pot),
-                            "bet_this_street": float(agents[i].bet_this_street),
-                            "is_all_in": bool(agents[i].all_in),
-                        }
-                        for i in range(n)
-                    ],
-                }
-            )
+            final_table_update = {
+                "type": "table_update",
+                "street": int(table.street_mgr.street),
+                "pot": float(table.pot_mgr.pot),
+                "bet_to_match": 0.0,
+                "table_cards": community,
+                "all_players": [
+                    {
+                        "seat": i,
+                        "name": agents[i].name,
+                        "position": int(agents[i].position),
+                        "state": agents[i].state.value,
+                        "stack": float(agents[i].stack),
+                        "money_in_pot": float(agents[i].money_in_pot),
+                        "bet_this_street": float(agents[i].bet_this_street),
+                        "is_all_in": bool(agents[i].all_in),
+                    }
+                    for i in range(n)
+                ],
+                "others": [
+                    {
+                        "position": int(agents[i].position),
+                        "state": agents[i].state.value,
+                        "stack": float(agents[i].stack),
+                        "money_in_pot": float(agents[i].money_in_pot),
+                        "bet_this_street": float(agents[i].bet_this_street),
+                        "is_all_in": bool(agents[i].all_in),
+                    }
+                    for i in range(n)
+                ],
+            }
+            self._broadcast_sync(final_table_update)
 
-            # Push final HH lines (showdown, summary)
             _push_new_hh_lines()
 
-            # Converti le carte dello showdown
+            # Showdown cards
             showdown = {}
             for player_name, cards in table.showdown_cards.items():
                 hand = []
@@ -381,7 +459,6 @@ class UITableManager:
                     hand.append({"suit": suit_idx, "rank": rank_idx})
                 showdown[player_name] = hand
 
-            # Stato reale dei giocatori dagli agenti
             final_players = [
                 {
                     "name": agents[i].name,
@@ -401,6 +478,15 @@ class UITableManager:
                 if rewards[i] is not None
             }
 
+            # Update leaderboard stacks
+            self._current_stacks = {a.name: float(a.stack) for a in agents}
+            self._broadcast_sync(
+                {
+                    "type": "leaderboard_update",
+                    "stacks": self._current_stacks,
+                }
+            )
+
             self._broadcast_sync(
                 {
                     "type": "hand_result",
@@ -414,19 +500,13 @@ class UITableManager:
             self._wait_for_hand_ack()
 
         final_stacks = {a.name: float(a.stack) for a in agents}
-        self._broadcast_sync(
-            {
-                "type": "game_over",
-                "final_stacks": final_stacks,
-            }
-        )
+        self._broadcast_sync({"type": "game_over", "final_stacks": final_stacks})
 
     # ------------------------------------------------------------------
     # Push helpers
     # ------------------------------------------------------------------
 
     def _push_your_turn(self, seat: int, obs: Observation):
-        """Send your_turn payload only to the acting player."""
         player = self.players.get(seat)
         if player is None or not player.is_connected:
             return
@@ -441,8 +521,6 @@ class UITableManager:
         )
 
     def _broadcast_player_states(self, agents):
-        """After reset_hand, push each player their own hole cards and stack."""
-
         for seat, player in self.players.items():
             if not player.is_connected or seat >= len(agents):
                 continue
@@ -471,17 +549,30 @@ class UITableManager:
     def _broadcast_sync(self, payload: dict):
         if self._loop is None:
             return
+        # Cache table_update and turn_indicator for late-joining spectators
+        if payload.get("type") == "table_update":
+            self._last_table_update = payload
+        elif payload.get("type") == "turn_indicator":
+            self._last_turn_indicator = payload
+
         asyncio.run_coroutine_threadsafe(
             self._broadcast_async(json.dumps(payload)), self._loop
         )
 
     async def _broadcast_async(self, raw: str):
+        # Broadcast to players
         for player in list(self.players.values()):
             if player.is_connected:
                 try:
                     await player._websocket.send(raw)
                 except Exception:
                     pass
+        # Broadcast to spectators
+        for ws in list(self._spectators):
+            try:
+                await ws.send(raw)
+            except Exception:
+                self._spectators.discard(ws)
 
     # ------------------------------------------------------------------
     # HTTP server
@@ -528,10 +619,6 @@ class UITableManager:
 
 
 def _build_table_update(obs: Observation, agents=None) -> dict:
-    """
-    Build a table_update payload.
-    If agents is provided, includes all_players with real names and seat numbers.
-    """
     n_table_cards = {0: 0, 1: 3, 2: 4, 3: 5}.get(int(obs.street), 0)
 
     payload = {
@@ -573,7 +660,6 @@ def _build_table_update(obs: Observation, agents=None) -> dict:
 
 
 def _build_turn_indicator(obs: Observation, agents) -> dict:
-    """Let all clients know whose turn it is (for UI highlighting)."""
     seat = int(obs.player_identifier)
     name = agents[seat].name if seat < len(agents) else "?"
     return {"type": "turn_indicator", "seat": seat, "name": name}

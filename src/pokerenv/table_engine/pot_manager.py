@@ -31,7 +31,7 @@ class PotManager:
             )
 
     def distribute_with_cards(self, players: list, evaluator, community_cards: list):
-        active_players = [p for p in players if p.state is PlayerState.ACTIVE]
+        active_players = [p for p in players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)]
 
         # Step 1 — hand ranks
         for player in active_players:
@@ -73,7 +73,7 @@ class PotManager:
                 player.money_in_pot = max(player.money_in_pot - min_contribution, 0)
 
             # Only active players are eligible to win this side pot
-            eligible = [p for p in all_contributors if p.state is PlayerState.ACTIVE]
+            eligible = [p for p in all_contributors if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)]
 
             if eligible:
                 best_rank = min(p.hand_rank for p in eligible)

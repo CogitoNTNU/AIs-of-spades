@@ -35,7 +35,7 @@ class EvenNet(PokerNet):
     def __init__(
         self,
         # BetsNN params
-        bets_in_dim: int = 128,
+        bets_in_dim: int = 64 * 8,
         bets_hidden_dim: int = 64,
         bets_out_dim: int = 32,
         # CardsCNN params
