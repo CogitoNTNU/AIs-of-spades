@@ -217,15 +217,12 @@ class LearningLoop:
         forkserver.  Using it with spawn adds complexity with no gain.
         """
         epochs = self.config.get("epochs", 1000)
-        games_per_epoch = self.config.get("games_per_epoch", 10)
-        hands_per_game = self.config.get("hands_per_game", 100)
         save_interval = self.config.get("save_interval", 20)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         print(
             f"[main] device={self.device}  epochs={epochs}  "
-            f"games/epoch={games_per_epoch}  hands/game={hands_per_game}  "
             f"workers={self.num_workers}",
             flush=True,
         )
@@ -251,8 +248,6 @@ class LearningLoop:
                     self._run_epoch(
                         epoch,
                         epochs,
-                        games_per_epoch,
-                        hands_per_game,
                         save_interval,
                         pool,
                     )
@@ -266,10 +261,23 @@ class LearningLoop:
     # Single epoch
     # ------------------------------------------------------------------
 
+    def _get_schedule_value(self, key: str, default: int, epoch: int) -> int:
+        schedule = self.config.get(key, default)
+        if isinstance(schedule, int):
+            return schedule
+        milestones = sorted(int(k) for k in schedule.keys())
+        result = int(schedule[str(milestones[0])])
+        for m in milestones:
+            if epoch >= m:
+                result = int(schedule[str(m)])
+        return result
+
     def _run_epoch(
-        self, epoch, epochs, games_per_epoch, hands_per_game, save_interval, pool
+        self, epoch, epochs, save_interval, pool
     ):
         t_epoch_start = time.time()
+        games_per_epoch = self._get_schedule_value("games_per_epoch", 10, epoch)
+        hands_per_game = self._get_schedule_value("hands_per_game", 32, epoch)
 
         state_dict = {k: v.cpu() for k, v in self.current_model.state_dict().items()}
 
@@ -321,7 +329,8 @@ class LearningLoop:
         batch_rewards = [
             np.mean([step[2] for step in t]) for t in batch_trajectories if t
         ]
-        total_steps = sum(len(t) for t in batch_trajectories)
+        total_actions = sum(len(t) for t in batch_trajectories)
+        total_hands = sum(int(d.get("game/hands_played", 0)) for d in batch_log_data)
 
         # ── Loss ──────────────────────────────────────────────────────
         t0 = time.time()
@@ -364,7 +373,7 @@ class LearningLoop:
             f"[{epoch + 1:>5}/{epochs}] "
             f"loss={loss.item():+.4f}  "
             f"reward={avg_reward:+8.1f}±{np.std(batch_rewards):.1f}  "
-            f"steps={total_steps:>5}  {probs_str}  "
+            f"actions={total_actions:>5}  hands={total_hands:>4}  {probs_str}  "
             f"grad={grad_norm:.3f}  "
             f"sim={t_simulation:.1f}s  fwd={t_loss:.1f}s  bwd={t_grad:.1f}s",
             flush=True,
@@ -391,7 +400,8 @@ class LearningLoop:
             loss_continuous=loss_continuous,
             avg_reward=avg_reward,
             batch_rewards=batch_rewards,
-            total_steps=total_steps,
+            total_actions=total_actions,
+            total_hands=total_hands,
             action_stats=action_stats,
             bonus_totals=bonus_totals,
             games_per_epoch=games_per_epoch,
@@ -467,7 +477,8 @@ class LearningLoop:
         loss_continuous,
         avg_reward,
         batch_rewards,
-        total_steps,
+        total_actions,
+        total_hands,
         action_stats,
         bonus_totals,
         games_per_epoch,
@@ -500,7 +511,7 @@ class LearningLoop:
                 "time/grad_step": t_grad,
                 "time/stats": t_stats,
                 "time/overhead": t_overhead,
-                "time/steps_per_sec": total_steps / t_total if t_total > 0 else 0.0,
+                "time/actions_per_sec": total_actions / t_total if t_total > 0 else 0.0,
                 "time/frac_simulation": t_simulation / t_total if t_total > 0 else 0.0,
                 "time/frac_gpu": (t_loss + t_grad) / t_total if t_total > 0 else 0.0,
                 # ── Loss ──────────────────────────────────────────────────
@@ -514,7 +525,8 @@ class LearningLoop:
                 "train/reward_std": np.std(batch_rewards),
                 "train/reward_max": np.max(batch_rewards),
                 "train/reward_min": np.min(batch_rewards),
-                "train/total_steps": total_steps,
+                "train/total_actions": total_actions,
+                "train/total_hands": total_hands,
                 "train/grad_norm": grad_norm,
                 "train/learning_rate": self.optimizer.param_groups[0]["lr"],
                 # ── Per-action baselines ───────────────────────────────────

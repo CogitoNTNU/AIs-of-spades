@@ -317,6 +317,7 @@ class Game:
 
         log_data = {
             "game/showdown_multiplier": self._showdown_reward_multiplier,
+            "game/hands_played": len(hands_trajectories),
         }
         return self.trajectory, total_bonus_events, log_data
 

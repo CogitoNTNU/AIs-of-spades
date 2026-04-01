@@ -10,8 +10,18 @@ learning_loop:
   lr_decay_steps: 100
   lr_decay_gamma: 0.97
   epochs: 100000
-  games_per_epoch: 60
-  hands_per_game: 32
+  games_per_epoch:
+    0:     5
+    500:   10   
+    1000:  20
+    5000:  30
+    10000: 50
+  hands_per_game:
+    0:     70
+    300:   50
+    1000:  40
+    5000:  30
+    10000: 25
   save_interval: 100
   num_workers: 8
   diversity_coef: 0.15
