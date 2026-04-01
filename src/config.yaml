@@ -12,16 +12,14 @@ learning_loop:
   epochs: 100000
   games_per_epoch:
     0:     5
-    500:   10   
-    1000:  20
-    5000:  30
-    10000: 50
+    5000:  10
+    20000: 20
+    50000: 50
   hands_per_game:
     0:     70
-    300:   50
-    1000:  40
-    5000:  30
-    10000: 25
+    5000:  50
+    20000: 40
+    50000: 30
   save_interval: 100
   num_workers: 8
   diversity_coef: 0.15
