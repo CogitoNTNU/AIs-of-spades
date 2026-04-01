@@ -26,7 +26,11 @@ learning_loop:
   diversity_lo: 0.08
   diversity_hi: 0.80
   entropy_coef: 0.05
-  action_baseline_window: 50
+  action_baseline_window:
+    0:     200
+    5000:  100
+    20000:  50
+    50000:  25
   continuous_weight: 0.01
   grad_clip_norm: 1.0
 
