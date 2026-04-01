@@ -10,8 +10,8 @@
 #SBATCH --nodes=1
 #SBATCH --mail-user=federih@stud.ntnu.no
 #SBATCH --mail-type=ALL
-
-cd "${SLURM_SUBMIT_DIR}"
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
 
 JOB_NAME="${JOB_NAME:-${SLURM_JOB_NAME}}"
 mkdir -p "slurm_outputs/${JOB_NAME}"
