@@ -360,6 +360,7 @@ class LearningLoop:
             loss_discrete,
             loss_continuous,
             adv_stats,
+            action_penalties,
         ) = self._compute_reinforce_loss(batch_trajectories)
         t_loss = time.time() - t0
 
@@ -429,6 +430,7 @@ class LearningLoop:
             adv_stats=adv_stats,
             grad_norm=grad_norm,
             game_log_data=game_log_data,
+            action_penalties=action_penalties,
             t_total=t_total,
             t_simulation=t_simulation,
             t_loss=t_loss,
@@ -503,6 +505,7 @@ class LearningLoop:
         adv_stats,
         grad_norm,
         game_log_data,
+        action_penalties,
         t_total,
         t_simulation,
         t_loss,
@@ -510,11 +513,7 @@ class LearningLoop:
         t_stats,
         t_overhead,
     ):
-        reward_scale = float(np.mean(np.abs(batch_rewards)) + 1e-8)
         continuous_weight = float(self.config.get("continuous_weight", 0.01))
-        diversity_coef_effective = (
-            float(self.config.get("diversity_coef", 0.1)) * reward_scale
-        )
 
         n_games = max(games_per_epoch, 1)
         bonus_rates = {f"bonus/{k}": v / n_games for k, v in bonus_totals.items()}
@@ -537,7 +536,9 @@ class LearningLoop:
                 "loss/discrete": loss_discrete,
                 "loss/continuous": loss_continuous,
                 "loss/continuous_weight": continuous_weight,
-                "loss/diversity_coef_effective": diversity_coef_effective,
+                "loss/penalty_fold": action_penalties.get("fold", 0.0),
+                "loss/penalty_call": action_penalties.get("call", 0.0),
+                "loss/penalty_bet": action_penalties.get("bet", 0.0),
                 # ── Training signal ───────────────────────────────────────
                 "train/avg_reward": avg_reward,
                 "train/reward_std": np.std(batch_rewards),
@@ -571,7 +572,7 @@ class LearningLoop:
 
     def _compute_reinforce_loss(
         self, batch_trajectories: list
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, float, dict]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, float, float, dict, dict]:
         """
         Compute the REINFORCE loss over a batch of episodes.
 
@@ -620,7 +621,7 @@ class LearningLoop:
 
         if raw_rewards[:idx].std() < 1e-8:
             zero = torch.tensor(0.0, requires_grad=False, device=device)
-            return zero, torch.zeros(3, device=device), zero, 0.0, 0.0, {}
+            return zero, torch.zeros(3, device=device), zero, 0.0, 0.0, {}, {}
 
         if idx == 0:
             zero = torch.tensor(0.0, device=device, requires_grad=True)
@@ -630,6 +631,7 @@ class LearningLoop:
                 torch.tensor(0.0, device=device),
                 0.0,
                 0.0,
+                {},
                 {},
             )
 
@@ -687,7 +689,7 @@ class LearningLoop:
         continuous_weight = float(self.config.get("continuous_weight", 0.01))
         reinforce_loss = disc_loss + continuous_weight * cont_loss
 
-        diversity_penalty, mean_probs = self._compute_diversity_penalty(
+        diversity_penalty, mean_probs, fold_penalty_val = self._compute_diversity_penalty(
             action_dist.probs, raw_rewards
         )
 
@@ -713,15 +715,17 @@ class LearningLoop:
             disc_loss.item(),
             (continuous_weight * cont_loss).item(),
             adv_stats,
+            fold_penalty_val,
         )
 
     def _compute_diversity_penalty(
         self, action_probs: torch.Tensor, all_rewards: np.ndarray
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         """
-        Penalise collapse toward a single action at the batch level.
-        Fires only when mean action probabilities exit [lo, hi].
-        The coefficient is scaled by mean |reward| to stay proportional
+        Per-action diversity penalty.
+        Each action (fold/call/bet) has independent [lo, hi] bounds and a coef.
+        Fires only when mean probability for that action exits its bounds.
+        All coefficients are scaled by mean |reward| to stay proportional
         to the reward magnitude throughout training.
 
         Parameters
@@ -731,18 +735,24 @@ class LearningLoop:
 
         Returns
         -------
-        penalty    : scalar tensor
-        mean_probs : [3] mean probabilities (used for logging)
+        penalty         : scalar tensor (sum of per-action penalties)
+        mean_probs      : [3] mean probabilities (used for logging)
+        action_penalties: dict with per-action penalty values (for logging)
         """
-        lo = float(self.config.get("diversity_lo", 0.01))
-        hi = float(self.config.get("diversity_hi", 0.99))
-
         reward_scale = max(float(np.mean(np.abs(all_rewards)) + 1e-8), 1.0)
-        coef = float(self.config.get("diversity_coef", 0.1)) * reward_scale
-
         mean_probs = action_probs.mean(dim=0)
-        penalty = (torch.relu(mean_probs - hi) + torch.relu(lo - mean_probs)).sum()
-        return coef * penalty, mean_probs
+
+        penalties = []
+        action_penalties = {}
+        for i, name in enumerate(["fold", "call", "bet"]):
+            lo = float(self.config.get(f"{name}_lo", 0.01))
+            hi = float(self.config.get(f"{name}_hi", 0.99))
+            coef = float(self.config.get(f"{name}_coef", 0.0)) * reward_scale
+            p = coef * (torch.relu(mean_probs[i] - hi) + torch.relu(lo - mean_probs[i]))
+            penalties.append(p)
+            action_penalties[name] = p.item()
+
+        return torch.stack(penalties).sum(), mean_probs, action_penalties
 
     # ------------------------------------------------------------------
     # Optimizer helpers

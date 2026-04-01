@@ -22,9 +22,15 @@ learning_loop:
     80000: 30
   save_interval: 100
   num_workers: 8
-  diversity_coef: 0.15
-  diversity_lo: 0.08
-  diversity_hi: 0.80
+  fold_lo: 0.05    # penalty se mean fold prob scende sotto questa soglia
+  fold_hi: 0.50    # penalty se mean fold prob supera questa soglia
+  fold_coef: 0.30  # coefficiente (scalato da reward_scale)
+  call_lo: 0.05
+  call_hi: 0.80
+  call_coef: 0.10
+  bet_lo: 0.05
+  bet_hi: 0.80
+  bet_coef: 0.10
   entropy_coef: 0.05
   action_baseline_window:
     0:      200
