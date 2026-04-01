@@ -243,24 +243,42 @@ class SimoNet(PokerNet):
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         device = next(self.parameters()).device
         ps: list[PreprocessedObs] = [p for p, _ in trajectory]
+        n = len(ps)
 
-        def stack(fn) -> torch.Tensor:
-            return torch.from_numpy(np.stack([fn(p) for p in ps])).to(device)
+        hole_np   = np.empty((n, 2, 2),              dtype=np.int64)
+        board_np  = np.empty((n, 5, 2),              dtype=np.int64)
+        bmask_np  = np.empty((n, 5),                 dtype=bool)
+        bets_np   = np.empty((n, 64, 8),             dtype=np.float32)
+        obs_np    = np.empty((n, 10),                dtype=np.float32)
+        opp_np    = np.empty((n, 5, 8),              dtype=np.float32)
+        omask_np  = np.empty((n, 5),                 dtype=bool)
+        hstate_np = np.empty((n, self.hand_state_dim), dtype=np.float32)
+        gstate_np = np.empty((n, self.game_state_dim), dtype=np.float32)
+
+        for i, p in enumerate(ps):
+            hole_np[i]   = p.hole_cards
+            board_np[i]  = p.board_cards
+            bmask_np[i]  = p.board_mask
+            bets_np[i]   = p.bets
+            obs_np[i]    = p.obs_scalars
+            opp_np[i]    = p.opp_vecs
+            omask_np[i]  = p.opp_mask
+            hstate_np[i] = p.hand_state.reshape(self.hand_state_dim)  # type: ignore[union-attr]
+            gstate_np[i] = p.game_state.reshape(self.game_state_dim)  # type: ignore[union-attr]
+
+        def to_t(arr: np.ndarray) -> torch.Tensor:
+            return torch.from_numpy(arr).to(device)
 
         action_logits, bet_mean, bet_std, _ = self._encode(
-            hole_cards=stack(lambda p: p.hole_cards),
-            board_cards=stack(lambda p: p.board_cards),
-            board_mask=stack(lambda p: p.board_mask),
-            bets=stack(lambda p: p.bets),
-            obs_scalars=stack(lambda p: p.obs_scalars),
-            opp_vecs=stack(lambda p: p.opp_vecs),
-            opp_mask=stack(lambda p: p.opp_mask),
-            hand_state=stack(
-                lambda p: p.hand_state.reshape(self.hand_state_dim)  # type: ignore[union-attr]
-            ).detach(),
-            game_state=stack(
-                lambda p: p.game_state.reshape(self.game_state_dim)  # type: ignore[union-attr]
-            ).detach(),
+            hole_cards  = to_t(hole_np),
+            board_cards = to_t(board_np),
+            board_mask  = to_t(bmask_np),
+            bets        = to_t(bets_np),
+            obs_scalars = to_t(obs_np),
+            opp_vecs    = to_t(opp_np),
+            opp_mask    = to_t(omask_np),
+            hand_state  = to_t(hstate_np).detach(),
+            game_state  = to_t(gstate_np).detach(),
         )
 
         return action_logits, bet_mean, bet_std

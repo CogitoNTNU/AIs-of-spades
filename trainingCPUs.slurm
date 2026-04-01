@@ -1,14 +1,11 @@
 #!/bin/sh
 #SBATCH --account=studiegrupper-cogito
 #SBATCH --job-name="ais-of-spades"
-#SBATCH --time=04:00:00
-#SBATCH --partition=GPUQ
-#SBATCH --gres=gpu:1
-#SBATCH --exclude=idun-09-[02-11,15,19-20]
-#SBATCH --cpus-per-task=14
-#SBATCH --mem=32GB
+#SBATCH --time=100:00:00
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=50GB
 #SBATCH --nodes=1
-#SBATCH --mail-user=federih@stud.ntnu.no
+#SBATCH --mail-user=simonee@stud.ntnu.no
 #SBATCH --mail-type=ALL
 
 cd "${SLURM_SUBMIT_DIR}"

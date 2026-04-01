@@ -14,12 +14,13 @@ MIN_STACK_TO_PLAY = 1
 
 class Game:
 
-    def __init__(self, opponents: list, current_model, config: dict):
+    def __init__(self, opponents: list, current_model, config: dict, evaluator=None):
         self.opponents = opponents
         self.current_model = current_model
         self.table = None
         self.agents = []
         self.config = config
+        self.evaluator = evaluator
 
         self.trajectory = []
         self.reward = 0.0
@@ -65,6 +66,7 @@ class Game:
             stack_high=self._stack_hi,
             hand_history_location="hands/",
             invalid_action_penalty=0,
+            evaluator=self.evaluator,
         )
         self.table.seed(None)
         self.table.reset()
@@ -315,6 +317,7 @@ class Game:
 
         log_data = {
             "game/showdown_multiplier": self._showdown_reward_multiplier,
+            "game/hands_played": len(hands_trajectories),
         }
         return self.trajectory, total_bonus_events, log_data
 

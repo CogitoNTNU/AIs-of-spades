@@ -29,6 +29,7 @@ class Table(gym.Env):
         hand_history_location="hands/",
         hand_history_enabled=False,
         invalid_action_penalty=0,
+        evaluator=None,
     ):
         self.action_space = gym.spaces.Tuple(
             (gym.spaces.Discrete(4), gym.spaces.Box(-math.inf, math.inf, (1, 1)))
@@ -40,7 +41,7 @@ class Table(gym.Env):
         self.stack_low = stack_low
         self.stack_high = stack_high
 
-        self.evaluator = Evaluator()
+        self.evaluator = evaluator if evaluator is not None else Evaluator()
         self.rng = np.random.default_rng(None)
 
         self.betting = BettingManager()
@@ -258,20 +259,18 @@ class Table(gym.Env):
             fallback = PlayerAction.CALL if action.action_type is PlayerAction.BET else PlayerAction.FOLD
             action = Action(
                 action_type=fallback,
-                action_tensor=action.action_tensor,
                 observation=action.observation,
                 bet_amount=0.0,
-                bet_tensor=action.bet_tensor,
+                bet_normalized=action.bet_normalized,
             )
         elif action.action_type is PlayerAction.BET:
             clamped = float(np.clip(action.bet_amount, bet_range[0], bet_range[1]))
             clamped = min(clamped, player.stack)
             action = Action(
                 action_type=action.action_type,
-                action_tensor=action.action_tensor,
                 observation=action.observation,
                 bet_amount=clamped,
-                bet_tensor=action.bet_tensor,
+                bet_normalized=action.bet_normalized,
             )
             out_of_range = not (
                 approx_lte(bet_range[0], action.bet_amount)
@@ -280,10 +279,9 @@ class Table(gym.Env):
             if out_of_range or approx_gt(action.bet_amount, player.stack):
                 action = Action(
                     action_type=PlayerAction.CALL,
-                    action_tensor=action.action_tensor,
                     observation=action.observation,
                     bet_amount=0.0,
-                    bet_tensor=action.bet_tensor,
+                    bet_normalized=action.bet_normalized,
                 )
 
         if action.action_type is PlayerAction.FOLD:
@@ -440,7 +438,7 @@ class Table(gym.Env):
         active_can_act = [
             p for p in self.players if p.state is PlayerState.ACTIVE
         ]
-        if len(active_can_act) == 0:
+        if len(active_can_act) <= 1:
             transition_to_end = True
 
         hand_over = self.street_mgr.transition(

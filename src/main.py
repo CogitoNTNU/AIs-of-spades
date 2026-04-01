@@ -68,6 +68,12 @@ if __name__ == "__main__":
         default="config.yaml",
         help="Path to the YAML configuration file",
     )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Run name: sets wandb run name and checkpoint_dir to res/checkpoints/<run-name>",
+    )
     args = parser.parse_args()
 
     with open(os.path.join(os.path.dirname(__file__), args.config_file), "r") as f:
@@ -75,6 +81,9 @@ if __name__ == "__main__":
 
     if args.num_workers is not None:
         config["learning_loop"]["num_workers"] = args.num_workers
+
+    if args.run_name is not None:
+        config["weight_manager"]["checkpoint_dir"] = f"res/checkpoints/{args.run_name}"
 
     config["weight_manager"]["model_class"] = MODEL_CLASSES[
         config["weight_manager"]["model_class"]
@@ -99,6 +108,7 @@ if __name__ == "__main__":
     wandb.init(
         project="AIs-Of-Spades",
         entity="pokerai",
+        name=args.run_name,
         config=config,
     )
 
