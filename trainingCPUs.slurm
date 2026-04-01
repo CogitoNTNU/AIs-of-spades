@@ -7,8 +7,8 @@
 #SBATCH --nodes=1
 #SBATCH --mail-user=simonee@stud.ntnu.no
 #SBATCH --mail-type=ALL
-
-cd "${SLURM_SUBMIT_DIR}"
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
 
 JOB_NAME="${JOB_NAME:-${SLURM_JOB_NAME}}"
 mkdir -p "slurm_outputs/${JOB_NAME}"
@@ -30,3 +30,4 @@ echo "CPUs allocated: ${SLURM_CPUS_PER_TASK}"
 uv run python src/main.py --num-workers $((SLURM_CPUS_PER_TASK - 2)) --resume-latest --run-name "${JOB_NAME}"
 
 echo "Job finished"
+
