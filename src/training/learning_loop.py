@@ -266,10 +266,10 @@ class LearningLoop:
         if isinstance(schedule, int):
             return schedule
         milestones = sorted(int(k) for k in schedule.keys())
-        result = int(schedule[str(milestones[0])])
+        result = int(schedule[milestones[0]])
         for m in milestones:
             if epoch >= m:
-                result = int(schedule[str(m)])
+                result = int(schedule[m])
         return result
 
     def _run_epoch(
