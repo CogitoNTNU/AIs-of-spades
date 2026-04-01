@@ -152,7 +152,7 @@ class LearningLoop:
         # Per-action baselines: fold=0, bet=1, call=2.
         # Rolling mean over the last N epochs per action — much faster to
         # adapt than EMA with alpha=0.01 (which needs ~460 epochs to converge).
-        baseline_window = self.config.get("action_baseline_window", 50)
+        baseline_window = self._get_schedule_value("action_baseline_window", 50, 0)
         self._action_reward_history: list[deque] = [
             deque(maxlen=baseline_window) for _ in range(3)
         ]
@@ -278,6 +278,11 @@ class LearningLoop:
         t_epoch_start = time.time()
         games_per_epoch = self._get_schedule_value("games_per_epoch", 10, epoch)
         hands_per_game = self._get_schedule_value("hands_per_game", 32, epoch)
+        baseline_window = self._get_schedule_value("action_baseline_window", 50, epoch)
+        if self._action_reward_history[0].maxlen != baseline_window:
+            self._action_reward_history = [
+                deque(h, maxlen=baseline_window) for h in self._action_reward_history
+            ]
 
         state_dict = {k: v.cpu() for k, v in self.current_model.state_dict().items()}
 
