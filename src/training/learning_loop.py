@@ -1,3 +1,4 @@
+import gc
 import os
 import time
 import traceback
@@ -375,6 +376,9 @@ class LearningLoop:
         action_stats = self._compute_action_stats(batch_trajectories)
         t_stats = time.time() - t0
 
+        del results, batch_trajectories, batch_bonus_events, batch_log_data
+        gc.collect()
+
         # Compute grad norm once — reused in both print and log
         grad_norm = self._get_grad_norm()
 
@@ -663,6 +667,7 @@ class LearningLoop:
         action_logits, bet_mean, bet_std = self.current_model.forward_batch(
             flat_trajectory
         )
+        del flat_trajectory, flat_preprocessed, flat_actions
 
         # action_indices already collected above — reuse it directly (zero-copy)
         action_batch = torch.from_numpy(action_indices).to(device)

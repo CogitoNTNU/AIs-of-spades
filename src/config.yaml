@@ -45,7 +45,7 @@ learning_loop:
     80000:   20   # late: fine-tune against fresh opponents frequently
 
 game_loop:
-  decadiment_factor: 0.8
+  decadiment_factor: 0.0
   elimination_bonus:  40.0   # half average starting stack
   survival_bonus:    200.0   # rare event, strong global signal
   isolation_bonus:     5.0   # mild nudge toward heads-up play
