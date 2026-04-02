@@ -1,14 +1,14 @@
 weight_manager:
   model_class: "SimoNet"
   max_models: 100
-  keep_latest: 20
+  keep_latest: 100
   sampling_mode: "linear"   # "uniform" or "linear" or "exponential"
   checkpoint_dir: "res/action-reward-test2"
 
 learning_loop:
   learning_rate: 3e-4
   lr_decay_steps: 100
-  lr_decay_gamma: 0.97
+  lr_decay_gamma: 0.995
   epochs: 100000
   games_per_epoch:
     0:     5
@@ -24,14 +24,13 @@ learning_loop:
   num_workers: 8
   fold_lo: 0.05    # penalty se mean fold prob scende sotto questa soglia
   fold_hi: 0.50    # penalty se mean fold prob supera questa soglia
-  fold_coef: 0.30  # coefficiente (scalato da reward_scale)
+  fold_coef: 0.15  # coefficiente (scalato da reward_scale)
   call_lo: 0.05
   call_hi: 0.80
-  call_coef: 0.10
+  call_coef: 0.15
   bet_lo: 0.05
   bet_hi: 0.80
-  bet_coef: 0.10
-  entropy_coef: 0.05
+  bet_coef: 0.15
   action_baseline_window:
     0:      200
     30000:  100

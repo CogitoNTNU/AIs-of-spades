@@ -693,11 +693,6 @@ class LearningLoop:
             action_dist.probs, raw_rewards
         )
 
-        # ── Entropy regularization — penalise policy collapse ─────────────
-        entropy_coef = float(self.config.get("entropy_coef", 0.0))
-        policy_entropy = action_dist.entropy().mean()
-        entropy_bonus = -entropy_coef * policy_entropy  # maximise entropy
-
         # ── Per-action advantage stats for logging ────────────────────────
         adv_stats = {}
         for action_idx, name in enumerate(["fold", "bet", "call"]):
@@ -706,10 +701,9 @@ class LearningLoop:
                 adv_for_action = advantages[mask]
                 adv_stats[f"advantage/mean_{name}"] = float(adv_for_action.mean())
                 adv_stats[f"advantage/std_{name}"] = float(adv_for_action.std())
-        adv_stats["entropy/policy"] = float(policy_entropy.item())
 
         return (
-            reinforce_loss + diversity_penalty + entropy_bonus,
+            reinforce_loss + diversity_penalty,
             mean_probs,
             diversity_penalty,
             disc_loss.item(),
