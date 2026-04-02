@@ -27,7 +27,7 @@ echo "ID of job: ${SLURM_JOB_ID}"
 echo "The job was run on these nodes: ${SLURM_JOB_NODELIST}"
 echo "CPUs allocated: ${SLURM_CPUS_PER_TASK}"
 
-uv run python src/main.py --num-workers $((SLURM_CPUS_PER_TASK - 2)) --resume-latest --run-name "${JOB_NAME}"
+uv run python src/main.py --num-workers $((SLURM_CPUS_PER_TASK - 1)) --resume-latest --run-name "${JOB_NAME}"
 
 echo "Job finished"
 
