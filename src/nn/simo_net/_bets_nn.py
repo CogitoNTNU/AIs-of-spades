@@ -91,7 +91,7 @@ class BetsNN(nn.Module):
         positions = torch.arange(T + 1, device=device).unsqueeze(0)  # [1, T+1]
         tokens = tokens + self.pos_emb(positions)
 
-        # Estendi la mask con False per il CLS (sempre presente)
+        # Extend the mask with False for the CLS token (always present)
         cls_present = torch.zeros(B, 1, dtype=torch.bool, device=device)
         full_mask = torch.cat([cls_present, pad_mask], dim=1)  # [B, T+1]
 
@@ -100,7 +100,7 @@ class BetsNN(nn.Module):
             tokens, src_key_padding_mask=full_mask
         )  # [B, T+1, d_model]
 
-        # CLS hidden state come rappresentazione globale
+        # CLS hidden state as global representation
         cls_out = out[:, 0, :]  # [B, d_model]
 
         return self.out_proj(cls_out)  # [B, out_dim]

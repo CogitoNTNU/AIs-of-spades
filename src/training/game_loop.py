@@ -226,7 +226,24 @@ class Game:
             reached_showdown = False
             active_count = self.active_opponents + 1
 
-            while True:
+            MAX_ACTIONS_PER_HAND = int(self.config.get("max_actions_per_hand", 500))
+            for _action_count in range(MAX_ACTIONS_PER_HAND + 1):
+                if _action_count == MAX_ACTIONS_PER_HAND:
+                    print(
+                        f"[game_loop] WARNING: hand exceeded {MAX_ACTIONS_PER_HAND} actions "
+                        f"— forcing end",
+                        flush=True,
+                    )
+                    self.table.hand_is_over = True
+                    self.table._end_hand()
+                    rewards = np.asarray(
+                        [
+                            p.get_reward()
+                            for p in sorted(self.agents, key=lambda a: a.identifier)
+                        ]
+                    )
+                    break
+
                 acting_player_i = int(obs.player_identifier)
 
                 if acting_player_i >= len(self.agents):

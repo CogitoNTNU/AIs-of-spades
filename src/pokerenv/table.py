@@ -254,7 +254,7 @@ class Table(gym.Env):
         action_list = valid_actions["actions_list"]
         bet_range = valid_actions["bet_range"]
 
-        # Se l'azione richiesta non è disponibile → FOLD, eccetto BET → CALL
+        # If the requested action is unavailable → FOLD, except BET → CALL
         if action.action_type not in action_list:
             fallback = PlayerAction.CALL if action.action_type is PlayerAction.BET else PlayerAction.FOLD
             action = Action(
@@ -414,7 +414,7 @@ class Table(gym.Env):
     def _advance_next_player(self):
         current_pos = self.players[self.current_player_i].position
 
-        # Candidati: attivi, non all-in, diversi dal corrente
+        # Candidates: active, not all-in, different from current player
         candidates = [
             i
             for i in range(self.n_players)
@@ -423,6 +423,10 @@ class Table(gym.Env):
         ]
 
         if not candidates:
+            # Current player is the only ACTIVE one left — no advancement needed;
+            # _check_street_or_hand_over will close the hand/street on the next
+            # check after the player has acted.
+            self.next_player_i = self.current_player_i
             return
 
         after = [i for i in candidates if self.players[i].position > current_pos]
@@ -477,7 +481,7 @@ class Table(gym.Env):
         self.hh.write_showdown(self.players, self.evaluator, self.street_mgr.cards)
         self.hh.write_summary(
             self.players,
-            self.pot_mgr.total_pot_for_hh,  # ← era pot_mgr.pot (sempre 0 dopo distribute)
+            self.pot_mgr.total_pot_for_hh,  # ← was pot_mgr.pot (always 0 after distribute)
             self.street_mgr.street,
             self.street_mgr.cards,
         )
@@ -531,7 +535,7 @@ class Table(gym.Env):
         stack_norm = self.players[player_id].stack / self.stack_high
         pot_norm = self.pot_mgr.pot / (
             self.stack_high * self.n_players
-        )  # scala ragionevole
+        )  # reasonable scale
         active = sum(1 for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN))
         btm_norm = self.betting.bet_to_match / self.stack_high
 

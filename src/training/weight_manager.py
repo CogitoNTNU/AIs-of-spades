@@ -45,8 +45,8 @@ class WeightManager:
         ]
         if self.snapshots:
             print(
-                f"[WeightManager] trovati {len(self.snapshots)} checkpoint su disco "
-                f"(epoche {self.snapshots[0]['epoch']}–{self.snapshots[-1]['epoch']})",
+                f"[WeightManager] found {len(self.snapshots)} checkpoints on disk "
+                f"(epochs {self.snapshots[0]['epoch']}–{self.snapshots[-1]['epoch']})",
                 flush=True,
             )
 

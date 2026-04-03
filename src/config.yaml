@@ -22,9 +22,10 @@ learning_loop:
     80000: 30
   save_interval: 100
   num_workers: 8
-  fold_lo: 0.05    # penalty se mean fold prob scende sotto questa soglia
-  fold_hi: 0.50    # penalty se mean fold prob supera questa soglia
-  fold_coef: 0.15  # coefficiente (scalato da reward_scale)
+  worker_timeout: 300        # max seconds per simulation epoch (5 min); 0 = disabled
+  fold_lo: 0.05    # penalty if mean fold prob drops below this threshold
+  fold_hi: 0.50    # penalty if mean fold prob exceeds this threshold
+  fold_coef: 0.15  # coefficient (scaled by reward_scale)
   call_lo: 0.05
   call_hi: 0.80
   call_coef: 0.15
@@ -42,7 +43,7 @@ learning_loop:
     0:      1000   # early: master one opponent before moving on
     30000:  200
     50000:  100
-    80000:   20   # late: fine-tune against fresh opponents frequently
+    80000:   50   # late: fine-tune against fresh opponents frequently
 
 game_loop:
   decadiment_factor: 0.0
@@ -56,3 +57,4 @@ game_loop:
   showdown_reward_multiplier_start:  2.0   # multiplier at epoch 0
   showdown_reward_multiplier_end:    1.0   # multiplier once decay is complete
   showdown_reward_multiplier_epochs: 30000 # epochs to reach end value (clamped after)
+  max_actions_per_hand: 500  # safety cap: ~19 raises/player × 6 players × 4 streets ≈ 450 theoretical max
