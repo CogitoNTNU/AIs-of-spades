@@ -321,7 +321,22 @@ class LearningLoop:
 
         # ── Simulation ────────────────────────────────────────────────
         t0 = time.time()
-        results = pool.map(_run_game, worker_args)
+        worker_timeout = self.config.get("worker_timeout", 300)
+        async_result = pool.map_async(_run_game, worker_args)
+        try:
+            timeout = worker_timeout if worker_timeout > 0 else None
+            results = async_result.get(timeout=timeout)
+        except mp.TimeoutError:
+            print(
+                f"[main] TIMEOUT: worker hung after {worker_timeout}s at epoch {epoch} "
+                f"— terminating pool",
+                flush=True,
+            )
+            pool.terminate()
+            pool.join()
+            raise RuntimeError(
+                f"Worker timeout after {worker_timeout}s at epoch {epoch}"
+            )
         t_simulation = time.time() - t0
 
         batch_trajectories = [r[0] for r in results]
