@@ -163,6 +163,10 @@ class LearningLoop:
         self._cached_opponent_state_dicts: list | None = None
         self._opponent_last_sampled_epoch: int = -9999
 
+        # Cumulative safety counters logged to wandb.
+        self._total_timeout_count: int = 0
+        self._total_max_actions_count: int = 0
+
     # ------------------------------------------------------------------
     # Checkpoint management
     # ------------------------------------------------------------------
@@ -242,25 +246,38 @@ class LearningLoop:
         model_class = self.current_model.__class__
 
         ctx = mp.get_context("spawn")
-        with ctx.Pool(
-            processes=self.num_workers,
-            initializer=_worker_init,
-            initargs=(model_class,),
-        ) as pool:
+
+        def _make_pool():
+            p = ctx.Pool(
+                processes=self.num_workers,
+                initializer=_worker_init,
+                initargs=(model_class,),
+            )
             print(f"[main] pool ready — {self.num_workers} workers", flush=True)
-            try:
-                for epoch in range(start_epoch, epochs):
-                    self._run_epoch(
-                        epoch,
-                        epochs,
-                        save_interval,
-                        pool,
+            return p
+
+        pool = _make_pool()
+        try:
+            for epoch in range(start_epoch, epochs):
+                try:
+                    self._run_epoch(epoch, epochs, save_interval, pool)
+                except RuntimeError as e:
+                    if "Worker timeout" not in str(e):
+                        raise
+                    self._total_timeout_count += 1
+                    wandb.log(
+                        step=epoch,
+                        data={"safety/worker_timeouts_total": self._total_timeout_count},
                     )
-            except KeyboardInterrupt:
-                print("[main] interrupted — terminating pool", flush=True)
-                pool.terminate()
-                pool.join()
-                raise
+                    pool = _make_pool()
+        except KeyboardInterrupt:
+            print("[main] interrupted — terminating pool", flush=True)
+            pool.terminate()
+            pool.join()
+            raise
+        finally:
+            pool.terminate()
+            pool.join()
 
     # ------------------------------------------------------------------
     # Single epoch
@@ -344,9 +361,17 @@ class LearningLoop:
         batch_log_data = [r[2] for r in results]
 
         # Average numeric log_data values across games for a stable per-epoch metric.
+        # game/safety_exits is summed (not averaged) and tracked cumulatively.
+        safety_exits_epoch = sum(
+            int(d.get("game/safety_exits", 0)) for d in batch_log_data
+        )
+        self._total_max_actions_count += safety_exits_epoch
+
         game_log_data: dict = {}
         if batch_log_data:
             for key in batch_log_data[0]:
+                if key == "game/safety_exits":
+                    continue  # handled separately above
                 vals = [d[key] for d in batch_log_data if key in d]
                 game_log_data[key] = float(np.mean(vals)) if vals else 0.0
 
@@ -450,6 +475,7 @@ class LearningLoop:
             grad_norm=grad_norm,
             game_log_data=game_log_data,
             action_penalties=action_penalties,
+            safety_exits_epoch=safety_exits_epoch,
             t_total=t_total,
             t_simulation=t_simulation,
             t_loss=t_loss,
@@ -525,6 +551,7 @@ class LearningLoop:
         grad_norm,
         game_log_data,
         action_penalties,
+        safety_exits_epoch,
         t_total,
         t_simulation,
         t_loss,
@@ -582,6 +609,10 @@ class LearningLoop:
                 **game_log_data,
                 # ── Bonus event rates (per game) ──────────────────────────
                 **bonus_rates,
+                # ── Safety counters ───────────────────────────────────────
+                "safety/max_actions_exits_epoch": safety_exits_epoch,
+                "safety/max_actions_exits_total": self._total_max_actions_count,
+                "safety/worker_timeouts_total": self._total_timeout_count,
             }
         )
 

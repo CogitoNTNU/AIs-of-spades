@@ -190,6 +190,7 @@ class Game:
 
         rewards_trajectories = []
         hands_trajectories = []
+        safety_exits = 0
 
         total_bonus_events = {
             "elimination": 0,
@@ -229,6 +230,7 @@ class Game:
             MAX_ACTIONS_PER_HAND = int(self.config.get("max_actions_per_hand", 500))
             for _action_count in range(MAX_ACTIONS_PER_HAND + 1):
                 if _action_count == MAX_ACTIONS_PER_HAND:
+                    safety_exits += 1
                     print(
                         f"[game_loop] WARNING: hand exceeded {MAX_ACTIONS_PER_HAND} actions "
                         f"— forcing end",
@@ -335,6 +337,7 @@ class Game:
         log_data = {
             "game/showdown_multiplier": self._showdown_reward_multiplier,
             "game/hands_played": len(hands_trajectories),
+            "game/safety_exits": safety_exits,
         }
         return self.trajectory, total_bonus_events, log_data
 
