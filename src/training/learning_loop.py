@@ -538,8 +538,8 @@ class LearningLoop:
         bonus_rates = {f"bonus/{k}": v / n_games for k, v in bonus_totals.items()}
 
         wandb.log(
+            step=epoch,
             data={
-                "epoch": epoch,
                 # ── Timing ────────────────────────────────────────────────
                 "time/total": t_total,
                 "time/simulation": t_simulation,
