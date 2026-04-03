@@ -3,7 +3,7 @@ weight_manager:
   max_models: 100
   keep_latest: 100
   sampling_mode: "linear"   # "uniform" or "linear" or "exponential"
-  checkpoint_dir: "res/action-reward-test2"
+  checkpoint_dir: "res/checkpoints"
 
 learning_loop:
   learning_rate: 3e-4
@@ -11,12 +11,12 @@ learning_loop:
   lr_decay_gamma: 0.995
   epochs: 100000
   games_per_epoch:
-    0:     5
+    0:     10
     30000: 10
     50000: 20
     80000: 30
   hands_per_game:
-    0:     70
+    0:     50
     30000: 50
     50000: 40
     80000: 30
