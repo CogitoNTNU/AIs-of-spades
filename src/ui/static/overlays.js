@@ -95,3 +95,29 @@ function showGameOver(stacks) {
   document.getElementById("gameover-overlay").classList.add("show");
   addLog(`🏁 <b>Game over!</b> Winner: <b>${sorted[0][0]}</b> with ${fmt(sorted[0][1])}`);
 }
+
+function showTableReset(stacks, reason) {
+  closeResult();
+  const sorted = Object.entries(stacks).sort((a, b) => b[1] - a[1]);
+  const reasonText =
+    reason === "elimination" ? "One player remaining" : "Hands completed";
+  document.getElementById("tablereset-reason").textContent = reasonText;
+  document.getElementById("tablereset-stacks").innerHTML = sorted
+    .map(
+      ([n, s], i) => `
+    <div class="result-row" style="margin-bottom:8px;">
+      <div class="result-name">${i === 0 ? "🏆 " : ""}${esc(n)}</div>
+      <div class="result-delta ${i === 0 ? "pos" : ""}">${fmt(s)}</div>
+    </div>`,
+    )
+    .join("");
+  document.getElementById("tablereset-overlay").classList.add("show");
+  addLog(`🔄 <b>Round over</b> (${reasonText}) — resetting table…`);
+}
+
+function closeTableReset() {
+  document.getElementById("tablereset-overlay").classList.remove("show");
+  handNumber = 0;
+  document.getElementById("tb-hand").textContent = `0 / ${totalHands}`;
+  if (ws) ws.send(JSON.stringify({ type: "hand_ack" }));
+}

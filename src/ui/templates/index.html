@@ -234,6 +234,29 @@
       </div>
     </div>
 
+    <!-- Table reset overlay -->
+    <div id="tablereset-overlay">
+      <div class="gameover-card">
+        <div class="gameover-title">ROUND OVER</div>
+        <div class="gameover-suits">♠ ♥ ♦ ♣</div>
+        <div
+          id="tablereset-reason"
+          style="
+            font-family: 'DM Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+          "
+        ></div>
+        <div id="tablereset-stacks" style="margin-bottom: 28px"></div>
+        <button class="btn-continue" onclick="closeTableReset()">
+          NEXT ROUND
+        </button>
+      </div>
+    </div>
+
     <!-- Game over overlay -->
     <div id="gameover-overlay">
       <div class="gameover-card">

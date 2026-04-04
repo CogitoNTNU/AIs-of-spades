@@ -75,6 +75,8 @@ class UITableManager:
         total_hands: int = 20,
         stack_low: int = 50,
         stack_high: int = 200,
+        auto_reset: bool = True,
+        action_delay: float = 0,
     ):
         self.n_seats = n_seats
         self.host = host
@@ -83,6 +85,8 @@ class UITableManager:
         self.total_hands = total_hands
         self.stack_low = stack_low
         self.stack_high = stack_high
+        self.auto_reset = auto_reset
+        self.action_delay = action_delay
 
         self.players: Dict[int, UIPlayer] = {}
         self._name_to_seat: Dict[str, int] = {}
@@ -91,6 +95,8 @@ class UITableManager:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._game_running: bool = False
         self._hand_ack_events: Dict[int, threading.Event] = {}
+        self._stop = threading.Event()
+        self._last_actions: Dict[int, Optional[dict]] = {}
 
         # --- Spectator support ---
         self._spectators: Set = set()  # set of websocket objects
@@ -105,7 +111,13 @@ class UITableManager:
     def run(self):
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._serve())
+        try:
+            self._loop.run_until_complete(self._serve())
+        except KeyboardInterrupt:
+            log.info("Shutting down…")
+        finally:
+            self._stop.set()
+            self._loop.close()
 
     # ------------------------------------------------------------------
     # Async server
@@ -340,7 +352,6 @@ class UITableManager:
             invalid_action_penalty=0,
         )
         table.seed(None)
-        table.reset()
 
         _hh_pushed: int = 0
 
@@ -352,155 +363,201 @@ class UITableManager:
                 self._broadcast_sync({"type": "hand_log", "lines": new_lines})
                 _hh_pushed = len(history)
 
-        for hand_index in range(self.total_hands):
-            log.info("Hand %d / %d", hand_index + 1, self.total_hands)
+        while (
+            True
+        ):  # round loop — runs once without auto_reset, loops indefinitely with it
+            if self._stop.is_set():
+                break
+            table.reset()
+            elimination = False
 
-            _hh_pushed = 0
-
-            for agent in agents:
-                agent.new_hand()
-
-            obs_array = table.reset_hand()
-            obs = Observation(obs_array, table.hand_log)
-
-            self._broadcast_sync(_build_table_update(obs, agents))
-            self._broadcast_sync(_build_turn_indicator(obs, agents))
-            self._broadcast_player_states(agents)
-            _push_new_hh_lines()
-
-            rewards = np.zeros(n)
-
-            while True:
-                acting_seat = int(obs.player_identifier)
-
-                if acting_seat >= n:
-                    log.warning(
-                        "player_identifier %d out of range — ending hand", acting_seat
-                    )
+            for hand_index in range(self.total_hands):
+                if self._stop.is_set():
                     break
+                log.info("Hand %d / %d", hand_index + 1, self.total_hands)
 
-                acting_agent = agents[acting_seat]
+                _hh_pushed = 0
 
-                if acting_agent.state is not PlayerState.ACTIVE:
-                    log.warning(
-                        "Table asked inactive player %d — forcing _end_hand",
-                        acting_seat,
-                    )
-                    table.hand_is_over = True
-                    table._end_hand()
-                    rewards = np.asarray([p.get_reward() for p in sorted(agents)])
-                    break
+                self._last_actions = {}
+                for agent in agents:
+                    agent.new_hand()
 
-                self._last_obs[acting_seat] = obs
-                self._push_your_turn(acting_seat, obs)
-                action = acting_agent.get_action(obs)
-                obs_array, rewards, done = table.step(action)
-
-                _push_new_hh_lines()
-
-                if done:
-                    break
-
+                obs_array = table.reset_hand()
                 obs = Observation(obs_array, table.hand_log)
+
                 self._broadcast_sync(_build_table_update(obs, agents))
                 self._broadcast_sync(_build_turn_indicator(obs, agents))
+                self._broadcast_player_states(agents)
+                _push_new_hh_lines()
 
-            # Broadcast board finale
-            community = []
-            for c in table.street_mgr.cards:
-                suit_bitmask = TreysCard.get_suit_int(c)
-                rank_idx = TreysCard.get_rank_int(c)
-                suit_idx = int(math.log2(suit_bitmask)) if suit_bitmask > 0 else 0
-                community.append({"suit": suit_idx, "rank": rank_idx})
+                rewards = np.zeros(n)
 
-            final_table_update = {
-                "type": "table_update",
-                "street": int(table.street_mgr.street),
-                "pot": float(table.pot_mgr.pot),
-                "bet_to_match": 0.0,
-                "table_cards": community,
-                "all_players": [
-                    {
-                        "seat": i,
-                        "name": agents[i].name,
-                        "position": int(agents[i].position),
-                        "state": agents[i].state.value,
-                        "stack": float(agents[i].stack),
-                        "money_in_pot": float(agents[i].money_in_pot),
-                        "bet_this_street": float(agents[i].bet_this_street),
-                        "is_all_in": bool(agents[i].all_in),
-                    }
-                    for i in range(n)
-                ],
-                "others": [
-                    {
-                        "position": int(agents[i].position),
-                        "state": agents[i].state.value,
-                        "stack": float(agents[i].stack),
-                        "money_in_pot": float(agents[i].money_in_pot),
-                        "bet_this_street": float(agents[i].bet_this_street),
-                        "is_all_in": bool(agents[i].all_in),
-                    }
-                    for i in range(n)
-                ],
-            }
-            self._broadcast_sync(final_table_update)
+                while True:
+                    acting_seat = int(obs.player_identifier)
 
-            _push_new_hh_lines()
+                    if acting_seat >= n:
+                        log.warning(
+                            "player_identifier %d out of range — ending hand",
+                            acting_seat,
+                        )
+                        break
 
-            # Showdown cards
-            showdown = {}
-            for player_name, cards in table.showdown_cards.items():
-                hand = []
-                for c in cards:
+                    acting_agent = agents[acting_seat]
+
+                    if acting_agent.state is not PlayerState.ACTIVE:
+                        log.warning(
+                            "Table asked inactive player %d — forcing _end_hand",
+                            acting_seat,
+                        )
+                        table.hand_is_over = True
+                        table._end_hand()
+                        rewards = np.asarray([p.get_reward() for p in sorted(agents)])
+                        break
+
+                    self._last_obs[acting_seat] = obs
+                    self._push_your_turn(acting_seat, obs)
+                    action = acting_agent.get_action(obs)
+                    amt = float(action.bet_amount)
+                    if action.action_type == PlayerAction.FOLD:
+                        self._last_actions[acting_seat] = {"label": "Fold"}
+                    elif action.action_type == PlayerAction.CALL:
+                        if amt == 0:
+                            self._last_actions[acting_seat] = {"label": "Check"}
+                        else:
+                            self._last_actions[acting_seat] = {"label": "Call", "amount": amt}
+                    else:  # BET
+                        self._last_actions[acting_seat] = {"label": "Bet", "amount": amt}
+                    obs_array, rewards, done = table.step(action)
+
+                    _push_new_hh_lines()
+
+                    if done:
+                        break
+
+                    obs = Observation(obs_array, table.hand_log)
+                    self._broadcast_sync(_build_table_update(obs, agents, self._last_actions))
+                    self._broadcast_sync(_build_turn_indicator(obs, agents))
+                    if self.action_delay > 0:
+                        self._stop.wait(timeout=self.action_delay)
+
+                # Broadcast board finale
+                community = []
+                for c in table.street_mgr.cards:
                     suit_bitmask = TreysCard.get_suit_int(c)
                     rank_idx = TreysCard.get_rank_int(c)
                     suit_idx = int(math.log2(suit_bitmask)) if suit_bitmask > 0 else 0
-                    hand.append({"suit": suit_idx, "rank": rank_idx})
-                showdown[player_name] = hand
+                    community.append({"suit": suit_idx, "rank": rank_idx})
 
-            final_players = [
-                {
-                    "name": agents[i].name,
-                    "seat": i,
-                    "stack": float(agents[i].stack),
-                    "state": agents[i].state.value,
-                    "money_in_pot": float(agents[i].money_in_pot),
-                    "bet_this_street": float(agents[i].bet_this_street),
-                    "is_all_in": bool(agents[i].all_in),
-                }
-                for i in range(n)
-            ]
-
-            reward_dict = {
-                agents[i].name: float(rewards[i])
-                for i in range(n)
-                if rewards[i] is not None
-            }
-
-            # Update leaderboard stacks
-            self._current_stacks = {a.name: float(a.stack) for a in agents}
-            self._broadcast_sync(
-                {
-                    "type": "leaderboard_update",
-                    "stacks": self._current_stacks,
-                }
-            )
-
-            self._broadcast_sync(
-                {
-                    "type": "hand_result",
-                    "rewards": reward_dict,
-                    "showdown": showdown,
-                    "players": final_players,
+                final_table_update = {
+                    "type": "table_update",
+                    "street": int(table.street_mgr.street),
+                    "pot": float(table.pot_mgr.pot),
+                    "bet_to_match": 0.0,
                     "table_cards": community,
+                    "all_players": [
+                        {
+                            "seat": i,
+                            "name": agents[i].name,
+                            "position": int(agents[i].position),
+                            "state": agents[i].state.value,
+                            "stack": float(agents[i].stack),
+                            "money_in_pot": float(agents[i].money_in_pot),
+                            "bet_this_street": float(agents[i].bet_this_street),
+                            "is_all_in": bool(agents[i].all_in),
+                            "hand_cards": _cards_to_list(agents[i].cards) if getattr(agents[i], "is_ai", False) else [],
+                            "last_action": self._last_actions.get(i),
+                        }
+                        for i in range(n)
+                    ],
+                    "others": [
+                        {
+                            "position": int(agents[i].position),
+                            "state": agents[i].state.value,
+                            "stack": float(agents[i].stack),
+                            "money_in_pot": float(agents[i].money_in_pot),
+                            "bet_this_street": float(agents[i].bet_this_street),
+                            "is_all_in": bool(agents[i].all_in),
+                        }
+                        for i in range(n)
+                    ],
                 }
-            )
+                self._broadcast_sync(final_table_update)
 
-            self._wait_for_hand_ack()
+                _push_new_hh_lines()
 
-        final_stacks = {a.name: float(a.stack) for a in agents}
-        self._broadcast_sync({"type": "game_over", "final_stacks": final_stacks})
+                # Showdown cards
+                showdown = {}
+                for player_name, cards in table.showdown_cards.items():
+                    hand = []
+                    for c in cards:
+                        suit_bitmask = TreysCard.get_suit_int(c)
+                        rank_idx = TreysCard.get_rank_int(c)
+                        suit_idx = int(math.log2(suit_bitmask)) if suit_bitmask > 0 else 0
+                        hand.append({"suit": suit_idx, "rank": rank_idx})
+                    showdown[player_name] = hand
+
+                final_players = [
+                    {
+                        "name": agents[i].name,
+                        "seat": i,
+                        "stack": float(agents[i].stack),
+                        "state": agents[i].state.value,
+                        "money_in_pot": float(agents[i].money_in_pot),
+                        "bet_this_street": float(agents[i].bet_this_street),
+                        "is_all_in": bool(agents[i].all_in),
+                    }
+                    for i in range(n)
+                ]
+
+                reward_dict = {
+                    agents[i].name: float(rewards[i])
+                    for i in range(n)
+                    if rewards[i] is not None
+                }
+
+                # Update leaderboard stacks
+                self._current_stacks = {a.name: float(a.stack) for a in agents}
+                self._broadcast_sync(
+                    {
+                        "type": "leaderboard_update",
+                        "stacks": self._current_stacks,
+                    }
+                )
+
+                self._broadcast_sync(
+                    {
+                        "type": "hand_result",
+                        "rewards": reward_dict,
+                        "showdown": showdown,
+                        "players": final_players,
+                        "table_cards": community,
+                    }
+                )
+
+                self._wait_for_hand_ack()
+
+                # Check if only one player still has chips
+                if sum(1 for a in agents if a.stack > 0) <= 1:
+                    elimination = True
+                    break
+
+            # End of round (hands exhausted or elimination)
+            final_stacks = {a.name: float(a.stack) for a in agents}
+
+            if self.auto_reset:
+                reason = "elimination" if elimination else "hands_completed"
+                self._broadcast_sync(
+                    {
+                        "type": "table_reset",
+                        "final_stacks": final_stacks,
+                        "reason": reason,
+                    }
+                )
+                self._wait_for_hand_ack()
+                # outer while loop continues: table.reset() assigns fresh random stacks
+            else:
+                self._broadcast_sync({"type": "game_over", "final_stacks": final_stacks})
+                break  # exit the outer while loop
 
     # ------------------------------------------------------------------
     # Push helpers
@@ -607,7 +664,9 @@ class UITableManager:
             events[seat] = e
 
         for e in events.values():
-            e.wait(timeout=60)
+            while not e.wait(timeout=1.0):
+                if self._stop.is_set():
+                    return
 
         for seat in human_seats:
             self._hand_ack_events.pop(seat, None)
@@ -618,7 +677,7 @@ class UITableManager:
 # ---------------------------------------------------------------------------
 
 
-def _build_table_update(obs: Observation, agents=None) -> dict:
+def _build_table_update(obs: Observation, agents=None, last_actions=None) -> dict:
     n_table_cards = {0: 0, 1: 3, 2: 4, 3: 5}.get(int(obs.street), 0)
 
     payload = {
@@ -653,6 +712,8 @@ def _build_table_update(obs: Observation, agents=None) -> dict:
                 "money_in_pot": float(a.money_in_pot),
                 "bet_this_street": float(a.bet_this_street),
                 "is_all_in": bool(a.all_in),
+                "hand_cards": _cards_to_list(a.cards) if getattr(a, "is_ai", False) else [],
+                "last_action": (last_actions or {}).get(i),
             }
             for i, a in enumerate(agents)
         ]
@@ -663,6 +724,16 @@ def _build_turn_indicator(obs: Observation, agents) -> dict:
     seat = int(obs.player_identifier)
     name = agents[seat].name if seat < len(agents) else "?"
     return {"type": "turn_indicator", "seat": seat, "name": name}
+
+
+def _cards_to_list(cards) -> list:
+    result = []
+    for c in cards:
+        suit_bitmask = TreysCard.get_suit_int(c)
+        rank_idx = TreysCard.get_rank_int(c)
+        suit_idx = int(math.log2(suit_bitmask)) if suit_bitmask > 0 else 0
+        result.append({"suit": suit_idx, "rank": rank_idx})
+    return result
 
 
 async def _safe_send(websocket, payload: str):
