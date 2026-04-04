@@ -953,6 +953,7 @@ input[type="range"].bet-slider::-moz-range-thumb {
    OVERLAYS
 ═══════════════════════════════════════════════════ */
 #result-overlay,
+#tablereset-overlay,
 #gameover-overlay {
   display: none;
   position: fixed;
@@ -964,6 +965,7 @@ input[type="range"].bet-slider::-moz-range-thumb {
   justify-content: center;
 }
 #result-overlay.show,
+#tablereset-overlay.show,
 #gameover-overlay.show {
   display: flex;
 }

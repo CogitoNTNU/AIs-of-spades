@@ -112,6 +112,7 @@ class Table(gym.Env):
 
             # Determine state
             if player.stack < MIN_STACK_TO_PLAY:
+                player.stack = 0
                 player.state = PlayerState.OUT
                 continue
 

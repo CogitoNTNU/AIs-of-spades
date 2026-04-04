@@ -108,6 +108,10 @@ function handle(msg) {
       showGameOver(msg.final_stacks || {});
       break;
 
+    case "table_reset":
+      showTableReset(msg.final_stacks || {}, msg.reason);
+      break;
+
     case "error":
       setJoinError(msg.message);
       addLog(`⚠ ${msg.message}`);

@@ -163,6 +163,10 @@ class LearningLoop:
         self._cached_opponent_state_dicts: list | None = None
         self._opponent_last_sampled_epoch: int = -9999
 
+        # Cumulative safety counters logged to wandb.
+        self._total_timeout_count: int = 0
+        self._total_max_actions_count: int = 0
+
     # ------------------------------------------------------------------
     # Checkpoint management
     # ------------------------------------------------------------------
@@ -242,25 +246,38 @@ class LearningLoop:
         model_class = self.current_model.__class__
 
         ctx = mp.get_context("spawn")
-        with ctx.Pool(
-            processes=self.num_workers,
-            initializer=_worker_init,
-            initargs=(model_class,),
-        ) as pool:
+
+        def _make_pool():
+            p = ctx.Pool(
+                processes=self.num_workers,
+                initializer=_worker_init,
+                initargs=(model_class,),
+            )
             print(f"[main] pool ready — {self.num_workers} workers", flush=True)
-            try:
-                for epoch in range(start_epoch, epochs):
-                    self._run_epoch(
-                        epoch,
-                        epochs,
-                        save_interval,
-                        pool,
+            return p
+
+        pool = _make_pool()
+        try:
+            for epoch in range(start_epoch, epochs):
+                try:
+                    self._run_epoch(epoch, epochs, save_interval, pool)
+                except RuntimeError as e:
+                    if "Worker timeout" not in str(e):
+                        raise
+                    self._total_timeout_count += 1
+                    wandb.log(
+                        step=epoch,
+                        data={"safety/worker_timeouts_total": self._total_timeout_count},
                     )
-            except KeyboardInterrupt:
-                print("[main] interrupted — terminating pool", flush=True)
-                pool.terminate()
-                pool.join()
-                raise
+                    pool = _make_pool()
+        except KeyboardInterrupt:
+            print("[main] interrupted — terminating pool", flush=True)
+            pool.terminate()
+            pool.join()
+            raise
+        finally:
+            pool.terminate()
+            pool.join()
 
     # ------------------------------------------------------------------
     # Single epoch
@@ -305,13 +322,27 @@ class LearningLoop:
         )
         mult_end = float(self.game_config.get("showdown_reward_multiplier_end", 1.0))
         decay_epochs = int(
-            self.game_config.get("showdown_reward_multiplier_epochs", epochs)
+            self.game_config.get("reward_decay_epochs",
+                self.game_config.get("showdown_reward_multiplier_epochs", epochs))
         )
         t = min(epoch / max(decay_epochs - 1, 1), 1.0)
         showdown_mult = mult_start + (mult_end - mult_start) * t
+
+        _bonus_keys = [
+            "elimination_bonus", "survival_bonus", "isolation_bonus",
+            "showdown_bonus", "steal_bonus",
+        ]
+        bonus_decay = 1.0 - t
+        decayed_bonuses = {
+            k: float(self.game_config.get(f"{k}_start", self.game_config.get(k, 0.0)))
+            * bonus_decay
+            for k in _bonus_keys
+        }
+
         game_config_epoch = {
             **self.game_config,
             "showdown_reward_multiplier": showdown_mult,
+            **decayed_bonuses,
         }
 
         worker_args = self._build_worker_args(
@@ -344,9 +375,17 @@ class LearningLoop:
         batch_log_data = [r[2] for r in results]
 
         # Average numeric log_data values across games for a stable per-epoch metric.
+        # game/safety_exits is summed (not averaged) and tracked cumulatively.
+        safety_exits_epoch = sum(
+            int(d.get("game/safety_exits", 0)) for d in batch_log_data
+        )
+        self._total_max_actions_count += safety_exits_epoch
+
         game_log_data: dict = {}
         if batch_log_data:
             for key in batch_log_data[0]:
+                if key == "game/safety_exits":
+                    continue  # handled separately above
                 vals = [d[key] for d in batch_log_data if key in d]
                 game_log_data[key] = float(np.mean(vals)) if vals else 0.0
 
@@ -450,6 +489,8 @@ class LearningLoop:
             grad_norm=grad_norm,
             game_log_data=game_log_data,
             action_penalties=action_penalties,
+            safety_exits_epoch=safety_exits_epoch,
+            bonus_decay=bonus_decay,
             t_total=t_total,
             t_simulation=t_simulation,
             t_loss=t_loss,
@@ -525,61 +566,65 @@ class LearningLoop:
         grad_norm,
         game_log_data,
         action_penalties,
+        safety_exits_epoch,
         t_total,
         t_simulation,
         t_loss,
         t_grad,
         t_stats,
         t_overhead,
+        bonus_decay,
     ):
-        continuous_weight = float(self.config.get("continuous_weight", 0.01))
-
         n_games = max(games_per_epoch, 1)
         bonus_rates = {f"bonus/{k}": v / n_games for k, v in bonus_totals.items()}
+
+        # Extract showdown_multiplier for schedule/ section; keep rest in game/
+        showdown_multiplier = game_log_data.pop("game/showdown_multiplier", None)
+        game_hands_played = game_log_data.pop("game/hands_played", None)
 
         wandb.log(
             step=epoch,
             data={
+                # ── Reward ────────────────────────────────────────────────
+                "reward/avg": avg_reward,
+                "reward/std": np.std(batch_rewards),
+                "reward/max": np.max(batch_rewards),
+                "reward/min": np.min(batch_rewards),
+                # ── Loss ──────────────────────────────────────────────────
+                "loss/total": loss.item() if loss.requires_grad else 0.0,
+                "loss/discrete": loss_discrete,
+                "loss/continuous": loss_continuous,
+                "loss/penalty_fold": action_penalties.get("fold", 0.0),
+                "loss/penalty_call": action_penalties.get("call", 0.0),
+                "loss/penalty_bet": action_penalties.get("bet", 0.0),
+                # ── Actions (freq + baseline + advantage) ─────────────────
+                **action_stats,
+                "action/baseline_fold": self._action_baselines[0],
+                "action/baseline_bet": self._action_baselines[1],
+                "action/baseline_call": self._action_baselines[2],
+                **adv_stats,
+                # ── Game stats ────────────────────────────────────────────
+                **({} if game_hands_played is None else {"game/hands_played": game_hands_played}),
+                **game_log_data,
+                "game/safety_exits": safety_exits_epoch,
+                # ── Training dynamics ─────────────────────────────────────
+                "train/grad_norm": grad_norm,
+                "train/learning_rate": self.optimizer.param_groups[0]["lr"],
+                "train/total_actions": total_actions,
+                "train/total_hands": total_hands,
+                # ── Schedule / curriculum ─────────────────────────────────
+                "schedule/games_per_epoch": games_per_epoch,
+                "schedule/hands_per_game": hands_per_game,
+                "schedule/resample_interval": resample_interval,
+                **({} if showdown_multiplier is None else {"schedule/showdown_multiplier": showdown_multiplier}),
+                "schedule/bonus_decay": bonus_decay,
                 # ── Timing ────────────────────────────────────────────────
-                "time/total": t_total,
                 "time/simulation": t_simulation,
                 "time/loss_forward": t_loss,
                 "time/grad_step": t_grad,
                 "time/stats": t_stats,
                 "time/overhead": t_overhead,
                 "time/actions_per_sec": total_actions / t_total if t_total > 0 else 0.0,
-                "time/frac_simulation": t_simulation / t_total if t_total > 0 else 0.0,
-                "time/frac_gpu": (t_loss + t_grad) / t_total if t_total > 0 else 0.0,
-                # ── Loss ──────────────────────────────────────────────────
-                "loss/total": loss.item() if loss.requires_grad else 0.0,
-                "loss/discrete": loss_discrete,
-                "loss/continuous": loss_continuous,
-                "loss/continuous_weight": continuous_weight,
-                "loss/penalty_fold": action_penalties.get("fold", 0.0),
-                "loss/penalty_call": action_penalties.get("call", 0.0),
-                "loss/penalty_bet": action_penalties.get("bet", 0.0),
-                # ── Training signal ───────────────────────────────────────
-                "train/avg_reward": avg_reward,
-                "train/reward_std": np.std(batch_rewards),
-                "train/reward_max": np.max(batch_rewards),
-                "train/reward_min": np.min(batch_rewards),
-                "train/total_actions": total_actions,
-                "train/total_hands": total_hands,
-                "train/games_per_epoch": games_per_epoch,
-                "train/hands_per_game": hands_per_game,
-                "train/opponent_resample_interval": resample_interval,
-                "train/grad_norm": grad_norm,
-                "train/learning_rate": self.optimizer.param_groups[0]["lr"],
-                # ── Per-action baselines ───────────────────────────────────
-                "baseline/fold": self._action_baselines[0],
-                "baseline/bet": self._action_baselines[1],
-                "baseline/call": self._action_baselines[2],
-                # ── Per-action advantages ──────────────────────────────────
-                **adv_stats,
-                # ── Action frequencies & game stats ───────────────────────
-                **action_stats,
-                # ── Game-level metrics from simulation ────────────────────
-                **game_log_data,
                 # ── Bonus event rates (per game) ──────────────────────────
                 **bonus_rates,
             }
@@ -719,8 +764,7 @@ class LearningLoop:
             mask = action_indices == action_idx
             if mask.any():
                 adv_for_action = advantages[mask]
-                adv_stats[f"advantage/mean_{name}"] = float(adv_for_action.mean())
-                adv_stats[f"advantage/std_{name}"] = float(adv_for_action.std())
+                adv_stats[f"action/adv_{name}"] = float(adv_for_action.mean())
 
         return (
             reinforce_loss + diversity_penalty,
@@ -819,7 +863,7 @@ class LearningLoop:
             "action/bet": counts[PlayerAction.BET] / total,
             "action/call": counts[PlayerAction.CALL] / total,
             "action/bet_amount": np.mean(bet_amounts) if bet_amounts else 0.0,
-            "game/avg_actions_per_game": np.mean(traj_lengths),
-            "game/min_actions_per_game": np.min(traj_lengths),
-            "game/max_actions_per_game": np.max(traj_lengths),
+            "game/avg_actions": np.mean(traj_lengths),
+            "game/min_actions": np.min(traj_lengths),
+            "game/max_actions": np.max(traj_lengths),
         }

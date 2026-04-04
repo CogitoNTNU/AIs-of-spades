@@ -123,6 +123,13 @@
   gap: 10px;
 }
 
+/* Hole cards container (face-up AI cards or hidden backs) */
+.sp-hole-cards {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+}
+
 /* Hidden hole cards badge */
 .sp-hidden-cards {
   letter-spacing: 3px;

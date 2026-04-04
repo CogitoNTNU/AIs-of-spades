@@ -3,7 +3,7 @@ weight_manager:
   max_models: 100
   keep_latest: 100
   sampling_mode: "linear"   # "uniform" or "linear" or "exponential"
-  checkpoint_dir: "res/action-reward-test2"
+  checkpoint_dir: "res/checkpoints"
 
 learning_loop:
   learning_rate: 3e-4
@@ -11,12 +11,12 @@ learning_loop:
   lr_decay_gamma: 0.995
   epochs: 100000
   games_per_epoch:
-    0:     5
+    0:     10
     30000: 10
     50000: 20
     80000: 30
   hands_per_game:
-    0:     70
+    0:     50
     30000: 50
     50000: 40
     80000: 30
@@ -47,14 +47,14 @@ learning_loop:
 
 game_loop:
   decadiment_factor: 0.0
-  elimination_bonus:  40.0   # half average starting stack
-  survival_bonus:    200.0   # rare event, strong global signal
-  isolation_bonus:     5.0   # mild nudge toward heads-up play
-  showdown_bonus:      2.0   # mild nudge toward staying in hands
-  steal_bonus:         8.0   # reinforce uncontested aggression
+  elimination_bonus_start:  40.0   # half average starting stack  → decays to 0
+  survival_bonus_start:    200.0   # rare event, strong global signal → decays to 0
+  isolation_bonus_start:     5.0   # mild nudge toward heads-up play  → decays to 0
+  showdown_bonus_start:      2.0   # mild nudge toward staying in hands → decays to 0
+  steal_bonus_start:         8.0   # reinforce uncontested aggression   → decays to 0
   stack_lo:           50.0
   stack_hi:          200.0
   showdown_reward_multiplier_start:  2.0   # multiplier at epoch 0
   showdown_reward_multiplier_end:    1.0   # multiplier once decay is complete
-  showdown_reward_multiplier_epochs: 30000 # epochs to reach end value (clamped after)
+  reward_decay_epochs: 30000 # epochs over which showdown multiplier and all bonuses decay (clamped after)
   max_actions_per_hand: 500  # safety cap: ~19 raises/player × 6 players × 4 streets ≈ 450 theoretical max

@@ -98,12 +98,23 @@ function renderSpectatorPlayers(players, actingSeat) {
           <div class="pc-stat-value">${fmt(p.bet_this_street)}</div>
         </div>
         <div>
+          <div class="pc-stat-label">Action</div>
+          <div class="pc-stat-value">${_actionLabel(p.last_action)}</div>
+        </div>
+        <div>
           <div class="pc-stat-label">Cards</div>
-          <div class="pc-stat-value sp-hidden-cards">🂠 🂠</div>
+          <div class="pc-stat-value sp-hole-cards" id="sp-cards-${p.seat}"></div>
         </div>
       </div>
     `;
     grid.appendChild(card);
+
+    const cardsEl = card.querySelector(`#sp-cards-${p.seat}`);
+    if (p.hand_cards && p.hand_cards.length === 2) {
+      p.hand_cards.forEach((c) => cardsEl.appendChild(buildCard(c)));
+    } else {
+      cardsEl.textContent = "🂠 🂠";
+    }
   });
 }
 
@@ -167,7 +178,7 @@ function buildCard(c) {
     "7",
     "8",
     "9",
-    "T",
+    "10",
     "J",
     "Q",
     "K",
@@ -187,6 +198,13 @@ function buildCard(c) {
     <span class="c-rank-bot">${rank}</span>
   `;
   return el;
+}
+
+/* ─── Action label helper ──────────────────────── */
+
+function _actionLabel(a) {
+  if (!a) return "—";
+  return a.amount != null ? `${a.label} ${fmt(a.amount)}` : a.label;
 }
 
 /* ─── State helpers (shared with render.js logic) ── */
