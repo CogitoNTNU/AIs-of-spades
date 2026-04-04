@@ -64,12 +64,13 @@ function renderSpectatorPlayers(players, actingSeat) {
   if (!grid) return;
   grid.innerHTML = "";
 
+  const nPlayers = players.length;
   players.forEach((p) => {
     const isActing = p.seat === actingSeat;
     const stateLabel = _stateLabel(p.state);
     const stateClass = _stateClass(p.state, p.is_all_in);
-    const posLabel = _posLabel(p.position);
-    const posColor = _posColor(p.position);
+    const posLabel = _posLabel(p.position, nPlayers);
+    const posColor = _posColor(p.position, nPlayers);
 
     const card = document.createElement("div");
     card.className = `player-card sp-player-card ${stateClass} ${isActing ? "acting" : ""}`;
@@ -209,34 +210,39 @@ function _actionLabel(a) {
 
 /* ─── State helpers (shared with render.js logic) ── */
 
+// PlayerState: FOLDED=0, ACTIVE=1, OUT=2, ALL_IN=3
 function _stateLabel(state) {
-  return state === 1 ? "Active" : state === 2 ? "Folded" : "Out";
+  return state === 0 ? "Folded" : state === 1 ? "Active" : "Out";
 }
 function _stateClass(state, allIn) {
   if (allIn) return "";
-  if (state === 2) return "folded";
-  if (state === 3) return "out";
+  if (state === 0) return "folded";
+  if (state === 2) return "out";
   return "";
 }
 function _badgeClass(state, allIn) {
   if (allIn) return "badge-allin";
-  if (state === 2) return "badge-folded";
-  if (state === 3) return "badge-out";
+  if (state === 0) return "badge-folded";
+  if (state === 2) return "badge-out";
   return "badge-active";
 }
-function _posLabel(pos) {
-  return ["BTN", "SB", "BB", "UTG", "UTG+1", "MP", "CO"][pos] ?? "";
+// TablePosition: SB=0, BB=1, UTG=2, UTG_1=3, …, BTN=n-1
+function _posLabel(pos, nPlayers) {
+  if (pos === 0) return "SB";
+  if (pos === 1) return "BB";
+  if (nPlayers !== undefined && pos === nPlayers - 1) return "BTN";
+  if (pos === 2) return "UTG";
+  return `UTG+${pos - 2}`;
 }
-function _posColor(pos) {
-  return (
-    [
-      "#c8a84b",
-      "#3ab860",
-      "#50a0e8",
-      "#e05050",
-      "#e07030",
-      "#b860e0",
-      "#e0c030",
-    ][pos] ?? "#aaa"
-  );
+function _posColor(pos, nPlayers) {
+  const label = _posLabel(pos, nPlayers);
+  const colors = {
+    SB: "#c8a84b",
+    BB: "#50a0e8",
+    BTN: "#3ab860",
+    UTG: "#e05050",
+    "UTG+1": "#e07030",
+    "UTG+2": "#b860e0",
+  };
+  return colors[label] ?? "#aaa";
 }

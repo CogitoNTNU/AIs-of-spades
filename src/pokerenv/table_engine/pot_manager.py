@@ -33,15 +33,9 @@ class PotManager:
     def distribute_with_cards(self, players: list, evaluator, community_cards: list):
         active_players = [p for p in players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)]
 
-        # Step 1 — hand ranks
-        for player in active_players:
-            player.calculate_hand_rank(evaluator, community_cards)
-
-        # self.pot already contains all contributions including folded players,
-        # added incrementally via pot_mgr.add() during betting.
         self.total_pot_for_hh = self.pot
 
-        # Step 2 — uncontested pot
+        # Step 1 — uncontested pot (skip hand rank evaluation — board may not be run out)
         if len(active_players) == 1:
             winner = active_players[0]
             winner.stack += self.pot
@@ -51,6 +45,10 @@ class PotManager:
             for player in players:
                 player.money_in_pot = 0
             return
+
+        # Step 2 — hand ranks (contested pot only — board is guaranteed run out here)
+        for player in active_players:
+            player.calculate_hand_rank(evaluator, community_cards)
 
         # Step 3 — side pot loop
         # All players (including folded) contribute to pot sizing,

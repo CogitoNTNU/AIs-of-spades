@@ -41,7 +41,11 @@ def _build_template() -> str:
     static = _HERE / "static"
     templates = _HERE / "templates"
 
-    css = (static / "poker.css").read_text(encoding="utf-8")
+    css = (
+        (static / "poker.css").read_text(encoding="utf-8")
+        + "\n"
+        + (static / "spectator.css").read_text(encoding="utf-8")
+    )
     js = "\n\n".join(
         (static / name).read_text(encoding="utf-8") for name in _JS_MODULES
     )
