@@ -1,60 +1,118 @@
+# =============================================================================
+# AIs-of-Spades — Training Configuration
+#
+# Epoch-keyed dicts (e.g. games_per_epoch) are milestone schedules: the entry
+# with the largest key ≤ current epoch is used.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Weight Manager — opponent pool of saved checkpoints used for self-play
+# -----------------------------------------------------------------------------
 weight_manager:
-  model_class: "SimoNet"
-  max_models: 100
-  keep_latest: 100
-  sampling_mode: "linear"   # "uniform" or "linear" or "exponential"
+  model_class: "SimoNet"       # neural net class to instantiate
+  max_models: 100              # max checkpoints kept in the pool (oldest evicted)
+  keep_latest: 100             # always retain the N most recent checkpoints
+  sampling_mode: "linear"      # opponent sampling: "uniform" | "linear" | "exponential"
   checkpoint_dir: "res/checkpoints"
 
+
+# -----------------------------------------------------------------------------
+# Learning Loop — REINFORCE training: data generation, gradient updates,
+#                 regularisation, curriculum scheduling
+# -----------------------------------------------------------------------------
 learning_loop:
-  learning_rate: 3e-4
-  lr_decay_steps: 200        # doubled with epochs to preserve same decay rate
+
+  # ── Optimiser ──────────────────────────────────────────────────────────────
+  learning_rate: 3e-4          # initial Adam lr
+  # StepLR: lr ×= lr_decay_gamma every lr_decay_steps epochs.
+  # With epochs=200k, steps=200, gamma=0.995 → lr_final ≈ 2e-6.
+  # Rule of thumb: lr_decay_steps = epochs / 1000.
+  lr_decay_steps: 200
   lr_decay_gamma: 0.995
+
   epochs: 200000
-  games_per_epoch:
+
+  # ── Data volume (grows over time for broader experience) ───────────────────
+  games_per_epoch:             # parallel games simulated per epoch
     0:      10
     60000:  10
     100000: 20
     160000: 30
-  hands_per_game:
+
+  hands_per_game:              # hands dealt per game (shorter episodes late in training)
     0:      50
     60000:  50
     100000: 40
     160000: 30
-  save_interval: 500
-  num_workers: 8
-  worker_timeout: 100        # max seconds per simulation epoch (5 min); 0 = disabled
-  fold_lo: 0.05    # penalty if mean fold prob drops below this threshold
-  fold_hi: 0.50    # penalty if mean fold prob exceeds this threshold
-  fold_coef: 0.15  # coefficient (scaled by reward_scale)
-  call_lo: 0.05
-  call_hi: 0.80
+
+  save_interval: 500           # save checkpoint every N epochs
+  num_workers: 8               # CPU workers for parallel game simulation (≤ physical cores)
+  worker_timeout: 100          # seconds before a hung simulation is killed; 0 = disabled
+
+  # ── Action-diversity penalties ─────────────────────────────────────────────
+  # Penalises the loss when mean action probability falls outside [lo, hi].
+  # Prevents degenerate always-fold / always-call strategies.
+  fold_lo:   0.05
+  fold_hi:   0.50
+  fold_coef: 0.15
+  call_lo:   0.05
+  call_hi:   0.80
   call_coef: 0.15
-  bet_lo: 0.05
-  bet_hi: 0.80
-  bet_coef: 0.15
+  bet_lo:    0.05
+  bet_hi:    0.80
+  bet_coef:  0.15
+
+  # Rolling window (epochs) for per-action baseline used in advantage estimation.
+  # Shrinks over time as the policy stabilises.
   action_baseline_window:
     0:       200
     60000:   100
     100000:   50
     160000:   25
-  continuous_weight: 0.01
-  grad_clip_norm: 1.0
+
+  continuous_weight: 0.01      # weight of bet-sizing loss vs discrete action loss
+  grad_clip_norm: 1.0          # max gradient L2 norm before clipping
+
+  # Epochs between drawing a new opponent sample from the checkpoint pool.
+  # Large early (master one style) → small late (stay robust to diverse opponents).
   opponent_resample_interval:
-    0:       1000   # early: master one opponent before moving on
+    0:       1000
     60000:    200
     100000:   100
-    160000:    50   # late: fine-tune against fresh opponents frequently
+    160000:    50
 
+
+# -----------------------------------------------------------------------------
+# Game Loop — poker simulation and reward shaping
+# -----------------------------------------------------------------------------
 game_loop:
+
+  # Temporal discount γ across hands within a game: R_t = r_t + γ·r_{t+1} + …
+  # 0.0 = each hand is independent (Monte-Carlo); >0 = future hands influence earlier decisions.
   decadiment_factor: 0.0
-  elimination_bonus_start:  40.0   # half average starting stack  → decays to 0
-  survival_bonus_start:    200.0   # rare event, strong global signal → decays to 0
-  isolation_bonus_start:     5.0   # mild nudge toward heads-up play  → decays to 0
-  showdown_bonus_start:      2.0   # mild nudge toward staying in hands → decays to 0
-  steal_bonus_start:         8.0   # reinforce uncontested aggression   → decays to 0
-  stack_lo:           50.0
-  stack_hi:          200.0
-  showdown_reward_multiplier_start:  2.0   # multiplier at epoch 0
-  showdown_reward_multiplier_end:    1.0   # multiplier once decay is complete
-  reward_decay_epochs: 60000 # epochs over which showdown multiplier and all bonuses decay (clamped after)
-  max_actions_per_hand: 500  # safety cap: ~19 raises/player × 6 players × 4 streets ≈ 450 theoretical max
+
+  # ── Shaping bonuses ────────────────────────────────────────────────────────
+  # Auxiliary rewards added to chip gain/loss to guide learning early in training.
+  # All decay linearly from their _start value to 0 over reward_decay_epochs.
+  elimination_bonus_start:  40.0   # agent eliminates an opponent (stack → 0)
+  survival_bonus_start:    200.0   # agent wins the game (sole survivor)
+  isolation_bonus_start:     5.0   # hand plays heads-up (1v1)
+  showdown_bonus_start:      2.0   # agent reaches showdown
+  steal_bonus_start:         8.0   # agent wins uncontested (everyone folded)
+
+  # Starting stacks are sampled uniformly from [stack_lo, stack_hi] (in BB).
+  stack_lo:  50.0
+  stack_hi: 200.0
+
+  # ── Showdown reward multiplier ─────────────────────────────────────────────
+  # Multiplies the chip reward at showdown to amplify the card-strength signal
+  # early in training, then decays to 1.0 (no boost) as the agent matures.
+  showdown_reward_multiplier_start:  2.0
+  showdown_reward_multiplier_end:    1.0
+
+  # Epochs over which ALL curriculum signals decay (bonuses → 0, multiplier → end).
+  reward_decay_epochs: 60000
+
+  # Safety cap on actions per hand to prevent infinite raise loops.
+  # Theoretical max ≈ 19 raises/player × 6 players × 4 streets = 456.
+  max_actions_per_hand: 500
