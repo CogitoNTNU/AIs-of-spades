@@ -322,13 +322,27 @@ class LearningLoop:
         )
         mult_end = float(self.game_config.get("showdown_reward_multiplier_end", 1.0))
         decay_epochs = int(
-            self.game_config.get("showdown_reward_multiplier_epochs", epochs)
+            self.game_config.get("reward_decay_epochs",
+                self.game_config.get("showdown_reward_multiplier_epochs", epochs))
         )
         t = min(epoch / max(decay_epochs - 1, 1), 1.0)
         showdown_mult = mult_start + (mult_end - mult_start) * t
+
+        _bonus_keys = [
+            "elimination_bonus", "survival_bonus", "isolation_bonus",
+            "showdown_bonus", "steal_bonus",
+        ]
+        bonus_decay = 1.0 - t
+        decayed_bonuses = {
+            k: float(self.game_config.get(f"{k}_start", self.game_config.get(k, 0.0)))
+            * bonus_decay
+            for k in _bonus_keys
+        }
+
         game_config_epoch = {
             **self.game_config,
             "showdown_reward_multiplier": showdown_mult,
+            **decayed_bonuses,
         }
 
         worker_args = self._build_worker_args(
@@ -476,6 +490,7 @@ class LearningLoop:
             game_log_data=game_log_data,
             action_penalties=action_penalties,
             safety_exits_epoch=safety_exits_epoch,
+            bonus_decay=bonus_decay,
             t_total=t_total,
             t_simulation=t_simulation,
             t_loss=t_loss,
@@ -558,6 +573,7 @@ class LearningLoop:
         t_grad,
         t_stats,
         t_overhead,
+        bonus_decay,
     ):
         n_games = max(games_per_epoch, 1)
         bonus_rates = {f"bonus/{k}": v / n_games for k, v in bonus_totals.items()}
@@ -601,6 +617,7 @@ class LearningLoop:
                 "schedule/hands_per_game": hands_per_game,
                 "schedule/resample_interval": resample_interval,
                 **({} if showdown_multiplier is None else {"schedule/showdown_multiplier": showdown_multiplier}),
+                "schedule/bonus_decay": bonus_decay,
                 # ── Timing ────────────────────────────────────────────────
                 "time/simulation": t_simulation,
                 "time/loss_forward": t_loss,
