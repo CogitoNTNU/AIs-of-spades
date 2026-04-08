@@ -384,12 +384,11 @@ class Table(gym.Env):
 
     def _return_uncalled_and_finish(self, hand_over: bool):
         """Return any uncalled portion then end the hand or transition to next street."""
-        all_active = [p for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)]
         if self.betting.last_bet_placed_by is not None:
             biggest_other = max(
                 (
                     p.bet_this_street
-                    for p in all_active
+                    for p in self.players
                     if p is not self.betting.last_bet_placed_by
                 ),
                 default=0.0,
@@ -469,12 +468,16 @@ class Table(gym.Env):
             if p.state is not PlayerState.FOLDED and p.state is not PlayerState.OUT
         }
 
-        while len(self.street_mgr.cards) < 5:
-            remaining = self.street_mgr.transition(
-                self.players, self.hh.write, transition_to_end=True
-            )
-            if remaining:
-                break
+        active_players = [p for p in self.players if p.state in (PlayerState.ACTIVE, PlayerState.ALL_IN)]
+        uncontested = len(active_players) <= 1
+
+        if not uncontested:
+            while len(self.street_mgr.cards) < 5:
+                remaining = self.street_mgr.transition(
+                    self.players, self.hh.write, transition_to_end=True
+                )
+                if remaining:
+                    break
 
         self.pot_mgr.distribute_with_cards(
             self.players, self.evaluator, self.street_mgr.cards

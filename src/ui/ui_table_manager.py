@@ -421,10 +421,11 @@ class UITableManager:
                     if action.action_type == PlayerAction.FOLD:
                         self._last_actions[acting_seat] = {"label": "Fold"}
                     elif action.action_type == PlayerAction.CALL:
-                        if amt == 0:
+                        call_amt = float(obs.bet_to_match)
+                        if call_amt == 0:
                             self._last_actions[acting_seat] = {"label": "Check"}
                         else:
-                            self._last_actions[acting_seat] = {"label": "Call", "amount": amt}
+                            self._last_actions[acting_seat] = {"label": "Call", "amount": call_amt}
                     else:  # BET
                         self._last_actions[acting_seat] = {"label": "Bet", "amount": amt}
                     obs_array, rewards, done = table.step(action)
