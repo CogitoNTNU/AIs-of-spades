@@ -285,7 +285,7 @@ learning_loop:
     10000: 25
 
 game_loop:
-  decadiment_factor: 0.8           # Discount (γ) across hands within a game
+  hand_reward_decay: 0.8           # Discount (γ) across hands within a game
   stack_lo: 50.0                   # Min starting stack (in big blinds)
   stack_hi: 200.0                  # Max starting stack
 
