@@ -368,6 +368,7 @@ class UITableManager:
         ):  # round loop — runs once without auto_reset, loops indefinitely with it
             if self._stop.is_set():
                 break
+            table.seed(None)
             table.reset()
             elimination = False
 
@@ -377,6 +378,13 @@ class UITableManager:
                 log.info("Hand %d / %d", hand_index + 1, self.total_hands)
 
                 _hh_pushed = 0
+
+                # Skip hand if fewer than 2 players have chips
+                active_count = sum(1 for a in agents if a.stack > 0)
+                if active_count < 2:
+                    log.info("Only %d active player(s) — stopping round early", active_count)
+                    elimination = True
+                    break
 
                 self._last_actions = {}
                 for agent in agents:

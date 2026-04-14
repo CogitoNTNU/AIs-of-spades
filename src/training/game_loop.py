@@ -326,7 +326,7 @@ class Game:
             if self.agents[0].stack <= 0:
                 break
 
-        gamma = self.config.get("decadiment_factor", 0.0)
+        gamma = self.config.get("hand_reward_decay", 0.0)
         for hand_trajectory, reward in zip(
             hands_trajectories,
             self.get_weighted_rewards(rewards_trajectories, gamma),

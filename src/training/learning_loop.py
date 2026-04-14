@@ -228,6 +228,7 @@ class LearningLoop:
         epochs = self.config.get("epochs", 1000)
         save_interval = self.config.get("save_interval", 20)
 
+        self._training_start_time = time.time()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         print(
@@ -492,6 +493,7 @@ class LearningLoop:
             safety_exits_epoch=safety_exits_epoch,
             bonus_decay=bonus_decay,
             t_total=t_total,
+            t_elapsed=time.time() - self._training_start_time,
             t_simulation=t_simulation,
             t_loss=t_loss,
             t_grad=t_grad,
@@ -568,6 +570,7 @@ class LearningLoop:
         action_penalties,
         safety_exits_epoch,
         t_total,
+        t_elapsed,
         t_simulation,
         t_loss,
         t_grad,
@@ -625,6 +628,7 @@ class LearningLoop:
                 "time/stats": t_stats,
                 "time/overhead": t_overhead,
                 "time/actions_per_sec": total_actions / t_total if t_total > 0 else 0.0,
+                "time/total_elapsed": t_elapsed,
                 # ── Bonus event rates (per game) ──────────────────────────
                 **bonus_rates,
             }
