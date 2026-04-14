@@ -1,0 +1,29 @@
+# MiheerNet configuration stub
+model: MiheerNet
+
+model_args:
+  # Cards encoder
+  cards_channels: [32, 64, 96]
+  cards_out_dim: 128
+  cards_dropout: 0.05
+
+  # Bets transformer (expects hand_log shaped [64, 8], flatten_seq_len=64)
+  bet_seq_len: 64
+  bet_feature_dim: 8
+  bet_model_dim: 128
+  bet_heads: 4
+  bet_layers: 3
+  bet_ff_dim: 256
+  bet_dropout: 0.1
+  bet_pooling: cls  # options: cls, mean, max
+
+  # State MLP
+  hand_state_dim: 32
+  game_state_dim: 32
+  state_hidden_dim: 128
+  state_out_dim: 96
+  state_dropout: 0.1
+
+  # Fusion trunk
+  trunk_hidden_dim: 256
+  trunk_dropout: 0.1

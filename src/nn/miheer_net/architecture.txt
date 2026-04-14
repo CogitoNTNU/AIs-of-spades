@@ -1,0 +1,17 @@
+Cards --------> CNN --------\
+                             \
+Bets ---------> Transformer ---> Fusion ---> Policy + Value
+                             /
+Game State ---> MLP --------/
+
+
+Cards (grid: [B,4,4,13]) --> CardsEncoder (CNN w/ residual blocks, global pool, proj) -----\
+                                                                                             \
+Bets (hand_log: [B,64,8] or flat [B,512]) --> BetsTransformer (pos enc + encoder + pooling) --> Fusion trunk (MLP) --> Policy logits + Bet mean/std + Next hand/game state
+                                                                                             /
+Hand/Game internal state ([B,H],[B,G]) --> StateMLP (dual-branch MLP) ----------------------/
+
+Key notes:
+- Three modular branches: CNN for cards, Transformer for betting history, MLP for hand/game state.
+- Fusion trunk combines embeddings; heads emit action logits, bet mean/logvar->std, and refreshed internal states.
+- Internal states (hand/game) are initialized once, refreshed each forward, and attached back to observations for replay-aware rollouts.

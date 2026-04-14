@@ -15,7 +15,7 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--http", type=int, default=8080)
-    parser.add_argument("--seats", type=int, default=4)
+    parser.add_argument("--seats", type=int, default=2)
     parser.add_argument("--hands", type=int, default=20)
     parser.add_argument("--stack-low", type=int, default=50)
     parser.add_argument("--stack-high", type=int, default=200)
