@@ -9,7 +9,7 @@
 # Weight Manager — opponent pool of saved checkpoints used for self-play
 # -----------------------------------------------------------------------------
 weight_manager:
-  model_class: "SimoNet"       # neural net class to instantiate
+  model_class: "FedeNet"       # neural net class to instantiate
   max_models: 1000             # max checkpoints kept in the pool (oldest evicted)
   keep_latest: 100             # always retain the N most recent checkpoints
   sampling_mode: "uniform"     # opponent sampling: "uniform" | "linear" | "exponential"

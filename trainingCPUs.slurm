@@ -1,11 +1,11 @@
 #!/bin/sh
 #SBATCH --account=studiegrupper-cogito
-#SBATCH --job-name="ais-of-spades"
-#SBATCH --time=150:00:00
-#SBATCH --cpus-per-task=12
-#SBATCH --mem=150GB
+#SBATCH --job-name="ais-of-spades-discussed"
+#SBATCH --time=100:00:00
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=50GB
 #SBATCH --nodes=1
-#SBATCH --mail-user=simonee@stud.ntnu.no
+#SBATCH --mail-user=federih@stud.ntnu.no
 #SBATCH --mail-type=ALL
 #SBATCH --output=/dev/null
 #SBATCH --error=/dev/null
