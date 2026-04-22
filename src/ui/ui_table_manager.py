@@ -649,7 +649,16 @@ class UITableManager:
         _HTTPHandler.html = html
 
         def _run():
-            server = HTTPServer((self.host, self.http_port), _HTTPHandler)
+            try:
+                server = HTTPServer((self.host, self.http_port), _HTTPHandler)
+            except OSError as e:
+                log.error(
+                    "HTTP server failed to bind on port %d: %s. "
+                    "Try a different port with --http <port>.",
+                    self.http_port,
+                    e,
+                )
+                return
             log.info("HTTP server on port %d", self.http_port)
             server.serve_forever()
 

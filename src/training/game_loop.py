@@ -297,7 +297,13 @@ class Game:
 
             main_reward = rewards[0]
             if main_reward is not None:
-                was_isolated = active_count == 2
+                # Isolation means the hand reached a 1v1 state that was not
+                # guaranteed from the start: skip if only one opponent had chips
+                # at the beginning of this specific hand (already heads-up).
+                opponents_alive_before = sum(
+                    1 for s in stacks_before.values() if s >= MIN_STACK_TO_PLAY
+                )
+                was_isolated = active_count == 2 and opponents_alive_before > 1
 
                 # Steal requires UGO to not be all-in: an all-in win where
                 # opponents fold is a different outcome, not a positional steal.

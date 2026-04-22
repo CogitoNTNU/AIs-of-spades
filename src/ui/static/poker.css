@@ -1204,7 +1204,8 @@ input[type="range"].bet-slider::-moz-range-thumb {
 #screen-spectator {
   display: none;
   justify-content: flex-start;
-  max-width: 820px;
+  width: 100%;
+  max-width: 100%;
   margin: 0 auto;
   padding: 16px 16px 48px;
   gap: 12px;

@@ -412,7 +412,31 @@ This project is developed by [Cogito NTNU](https://github.com/CogitoNTNU).
         <td align="center">
             <a href="https://github.com/Simooo45">
               <img src="https://github.com/Simooo45.png?size=100" width="100px;" alt="Simooo45"/><br />
-              <sub><b>Simooo45</b></sub>
+              <sub><b>Simone Elia</b></sub>
+            </a>
+        </td>
+        <td align="center">
+            <a href="https://github.com/Federico53">
+              <img src="https://github.com/Federico53.png?size=100" width="100px;" alt="Federico53"/><br />
+              <sub><b>Federico Hrvatin</b></sub>
+            </a>
+        </td>
+        <td align="center">
+            <a href="https://github.com/Baykugan">
+              <img src="https://github.com/Baykugan.png?size=100" width="100px;" alt="Baykugan"/><br />
+              <sub><b>Even Ytterli Tokle</b></sub>
+            </a>
+        </td>
+        <td align="center">
+            <a href="https://github.com/Miheergautam">
+              <img src="https://github.com/Miheergautam.png?size=100" width="100px;" alt="Miheergautam"/><br />
+              <sub><b>Miheer Gautam</b></sub>
+            </a>
+        </td>
+        <td align="center">
+            <a href="https://github.com/Daniel-Meling">
+              <img src="https://github.com/Daniel-Meling.png?size=100" width="100px;" alt="Daniel-Meling"/><br />
+              <sub><b>Daniel Meling</b></sub>
             </a>
         </td>
     </tr>
